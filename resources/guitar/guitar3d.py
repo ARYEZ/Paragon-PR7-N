@@ -306,6 +306,14 @@ NECK_SNAP = float(os.environ.get("GUITAR_NECK_SNAP_MM", "6")) / 1000.0
 for i, (x, y) in enumerate(outline):
     if x >= BOARD_END - 0.001 and abs(y) <= neck_half(x) + NECK_SNAP:
         outline[i] = (x, math.copysign(neck_half(x) - 0.0015, y if y != 0 else 1.0))
+# PR7-N: the traced body's gap for the neck follows the real bass's slanted board end, not quite our fanned board's: on
+# the bass the gap is squared off where our board ends on the high strings' side (its nearest end to the nut), so the
+# board covers all of it (on the low side the board runs on over the body, as a real neck does)
+if BASS:
+    x_treble_end = fx(24, -neck_half(BOARD_END)) - 0.007 + 0.0005
+    for i, (x, y) in enumerate(outline):
+        if BOARD_END - 0.03 < x < x_treble_end and abs(y) < neck_half(x) + NECK_SNAP:
+            outline[i] = (x_treble_end, y)
 # the outline as a slab: one flat face on top and one below (n-gons, so the lacquer shades clean), the edge rounded
 # by a bevel
 n_out = len(outline)
@@ -358,7 +366,10 @@ def tapered(name, x0, x1, z0, z1, extra, mat, bevel=0.0015):
     return o
 board_end_at = lambda y: fx(24, y) - 0.007      # (straight across when FAN is 0: the guitars)
 nut_at = lambda y: fx(0, y)
-tapered("neck", lambda y: board_end_at(y) - 0.03, (lambda y: nut_at(y) + (0.024 if HEADLESS else 0.004)), -0.004, neck_top, 0.0012, NECKWOOD, 0.003)
+# (the neck's heel runs 30 mm on past the board's end on the guitars; on the bass it stops at the board's end, or it
+# covers the neck pickup's edge: the three pickups sit close to the neck)
+HEEL = 0.002 if BASS else 0.03
+tapered("neck", lambda y: board_end_at(y) - HEEL, (lambda y: nut_at(y) + (0.024 if HEADLESS else 0.004)), -0.004, neck_top, 0.0012, NECKWOOD, 0.003)
 tapered("fretboard", board_end_at, nut_at, neck_top - 0.001, fb_top, 0.0, EBONY, 0.0008)
 # a soft neon line along both edges of the fretboard
 for side in (1, -1):
