@@ -118,7 +118,7 @@ jobs:
   # above, zipped, with notes from CHANGELOG.md.
   release:
     name: Release
-    if: false   # PR7-N 0.1.0: held until the owner OKs the logo and the page (then back to github.event_name == 'push')
+    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-24.04
     permissions:
