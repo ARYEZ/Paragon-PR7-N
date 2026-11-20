@@ -67,7 +67,7 @@ SettingsPage::SettingsPage (ParagonX1AudioProcessor& p)
         styleButton (*button, button == &saveDefault);
         addAndMakeVisible (*button);
     }
-    saveDefault.setTooltip ("A new PR7-I (in any project) starts with these links");
+    saveDefault.setTooltip ("A new PR7-N (in any project) starts with these links");
     exportLinks.setTooltip ("Save these links to a file, to back them up or use on another computer");
     importLinks.setTooltip ("Load links from a file saved with EXPORT");
     clearLinks.setTooltip ("Forget every link (undo isn't kept for links: EXPORT first if you might want them back)");
@@ -199,15 +199,15 @@ void SettingsPage::paint (juce::Graphics& g)
     }
     section (finishArea, "FINISH",
              "The rack's colour: OBSIDIAN (pearl black) or AURORA (pearl white), both with black keys and knobs in neon pink-to-orange rings. "
-             "Saved on this computer, so every Paragon PR7-I you open uses it.");
+             "Saved on this computer, so every Paragon PR7-N you open uses it.");
     section (rigsArea, "PRESETS", "Your presets are files in this folder, so you can back them up or share them:\n"
                                   + processor.getRigLibrary().getFolder().getFullPathName());
     section (midiArea, "MIDI LINKS", shownLinks.isEmpty()
                  ? juce::String ("None yet. Right-click a knob and choose MIDI learn, then move a knob or fader on your controller.")
                  : juce::String ("Your controller's knobs and faders, and the knobs they turn. Kept with the project; "
-                                 "SAVE AS DEFAULT for every new PR7-I."));
+                                 "SAVE AS DEFAULT for every new PR7-N."));
     section (aboutArea, "ABOUT",
-             juce::String ("Paragon PR7-I v") + JucePlugin_VersionString
+             juce::String ("Paragon PR7-N v") + JucePlugin_VersionString
                  + ". The PR7 family's guitar instrument: a 7-string in drop A played from MIDI, from takes you render or record "
                    "and import (none ship with it). Our own design and code, inspired by how commercial guitar instruments play. "
                    "Put PR7-G after it for amps, cabinets and effects. Free and open source under the GNU AGPLv3.\n"

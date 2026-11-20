@@ -4,11 +4,9 @@ namespace guitar::renders
 {
     const Spec& spec (Articulation a)
     {
-        static const Spec sustain { 3, { 45, 85, 118 }, 2, 4.0, 5.5, keys::sustain };
-        // MUTE: Jupiter's Mute Layer table (the owner's screenshot, factory map, November 2026, measured from its bars):
-        // five degrees of muting in zones 1-25, 26-51, 52-76, 77-102, 103-127; one velocity mid-zone each, at least 12 from
-        // a zone's edge.
-        static const Spec mute { 5, { 13, 38, 64, 89, 115 }, 8, 1.0, 1.6, keys::mute };
+        static const Spec sustain { 3, { 45, 85, 118 }, 4, 3.5, 4.5, keys::mainAlternate };
+        // MUTE: PR7-I's (Jupiter's Mute Layer table: zones 1-25, 26-51, 52-76, 77-102, 103-127, a velocity mid-zone each).
+        static const Spec mute { 5, { 13, 38, 64, 89, 115 }, 8, 1.0, 1.6, keys::palmMuteAlternate };
         return a == Articulation::mute ? mute : sustain;
     }
 
@@ -28,28 +26,13 @@ namespace guitar::renders
         auto t = leadInSeconds + noteDelaySeconds;
         for (int fret = 0; fret <= numFrets; ++fret)
             for (int layer = 0; layer < s.layers; ++layer)
-            {
-                if (a == Articulation::mute)
-                {
-                    // 0.6.2 (the "v2" lists): each note's downs in a row, then its ups. The owner's palm mute and order
-                    // checks: Jupiter has 8 down / 6 up palm mutes a note, but plays only ~4 of each when the strokes
-                    // alternate (as the first lists did: down, up, down, up), all of them when a stroke repeats.
-                    for (const auto stroke : { Stroke::down, Stroke::up })
-                        for (int rr = 0; rr < s.roundRobins; ++rr)
-                        {
-                            result.push_back ({ string, fret, layer, stroke, rr, t, a });
-                            t += s.slotSeconds;
-                        }
-                    continue;
-                }
-                // SUSTAIN (fixed: the owner rendered these): down, up, down, up.
-                for (int rr = 0; rr < s.roundRobins; ++rr)
-                    for (const auto stroke : { Stroke::down, Stroke::up })
+                // Each stroke's round-robins in a row: every down, then every up.
+                for (const auto stroke : { Stroke::down, Stroke::up })
+                    for (int rr = 0; rr < s.roundRobins; ++rr)
                     {
                         result.push_back ({ string, fret, layer, stroke, rr, t, a });
                         t += s.slotSeconds;
                     }
-            }
         return result;
     }
 
@@ -71,13 +54,13 @@ namespace guitar::renders
             track.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100).withTimeStamp (ticks (at)));
             track.addEvent (juce::MidiMessage::noteOff (1, note).withTimeStamp (ticks (at + 0.05)));
         };
-        key (keys::forceStringLowA + string, 0.5);
-        key (keys::legatoOff, 0.75);
+        // The force-string key held through the whole file (Keys.h).
+        track.addEvent (juce::MidiMessage::noteOn (1, keys::forceKey (string), (juce::uint8) 100).withTimeStamp (ticks (0.5)));
+        track.addEvent (juce::MidiMessage::noteOff (1, keys::forceKey (string)).withTimeStamp (ticks (lengthSeconds (a, string) - 0.1)));
         for (const auto& take : takes (a, string))
         {
             const auto slot = take.noteSeconds - noteDelaySeconds;
-            key (spec (a).key, slot);
-            key (take.stroke == Stroke::down ? keys::pickDown : keys::pickUp, slot + 0.05);
+            key (keys::strokeKey (a, take.stroke), slot);
             track.addEvent (juce::MidiMessage::textMetaEvent (6, "F" + juce::String (take.fret) + " L" + juce::String (take.layer + 1)
                                                                     + (take.stroke == Stroke::down ? " DOWN " : " UP ") + juce::String (take.roundRobin + 1)).withTimeStamp (ticks (take.noteSeconds)));
             track.addEvent (juce::MidiMessage::noteOn (1, take.note(), (juce::uint8) take.velocity()).withTimeStamp (ticks (take.noteSeconds)));
@@ -94,11 +77,7 @@ namespace guitar::renders
 
     juce::String fileName (Articulation a, int string)
     {
-        const auto which = string == 0 ? juce::String ("low A") : string == numStrings - 1 ? juce::String ("high E") : stringName (string);
-        // (0.6.2: the palm-mute lists in their new order are "v2", so a render of the first ones, whose strokes alternate,
-        // can't be taken for one of these.)
-        return "PR7-I " + articulationName (a) + (a == Articulation::mute ? " v2" : "") + " - String " + juce::String (playerNumber (string))
-             + " (" + which + ")";
+        return "PR7-N " + articulationName (a) + " - String " + juce::String (playerNumber (string)) + " (" + stringWhich (string) + ")";
     }
 
     juce::String takeFileName (Articulation a, const Take& t)

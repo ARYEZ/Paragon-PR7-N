@@ -9,22 +9,30 @@ namespace guitar::renders::rrcheck
 {
     const std::vector<Group>& groups (Check check)
     {
+        // PR7-N 0.1.0, the bass's first check (render it before the full lists): sustain and palm mute on the low A and on
+        // the G string, each stroke's 16 in a row; and the low A sustained at five velocities, to hear (and measure) how
+        // many dynamics the reference has.
         static const std::vector<Group> g {
             { Articulation::sustain, 0, 0, 118, "Sustain, low A open, hard" },
-            { Articulation::mute, 0, 0, 100, "Palm mute, low A open" },
-            { Articulation::sustain, 3, 5, 85, "Sustain, D string 5th fret, medium" } };
-        // 0.6.1: palm mutes from the thin strings down (velocity: the degree of muting, the list's 64 = the middle one).
+            { Articulation::sustain, 4, 5, 85, "Sustain, G string 5th fret, medium" },
+            { Articulation::mute, 0, 0, 64, "Palm mute, low A open, middle" },
+            { Articulation::mute, 4, 0, 64, "Palm mute, G string open, middle" },
+            { Articulation::sustain, 0, 5, 20, "Sustain, low A 5th fret, velocity 20" },
+            { Articulation::sustain, 0, 5, 50, "Sustain, low A 5th fret, velocity 50" },
+            { Articulation::sustain, 0, 5, 80, "Sustain, low A 5th fret, velocity 80" },
+            { Articulation::sustain, 0, 5, 105, "Sustain, low A 5th fret, velocity 105" },
+            { Articulation::sustain, 0, 5, 127, "Sustain, low A 5th fret, velocity 127" } };
+        // PR7-I's palm mute and order checks, on the bass's strings.
         static const std::vector<Group> pm {
-            { Articulation::mute, 6, 0, 64, "Palm mute, high E open, middle" },
-            { Articulation::mute, 6, 7, 64, "Palm mute, high E 7th fret, middle" },
-            { Articulation::mute, 5, 0, 64, "Palm mute, B string open, middle" },
-            { Articulation::mute, 4, 5, 115, "Palm mute, G string 5th fret, least muted" },
+            { Articulation::mute, 4, 0, 64, "Palm mute, G string open, middle" },
+            { Articulation::mute, 4, 7, 64, "Palm mute, G string 7th fret, middle" },
+            { Articulation::mute, 3, 0, 64, "Palm mute, D string open, middle" },
+            { Articulation::mute, 2, 5, 115, "Palm mute, A string 5th fret, least muted" },
             { Articulation::mute, 0, 0, 64, "Palm mute, low A open, middle" } };
-        // 0.6.2: the order check.
         static const std::vector<Group> order {
-            { Articulation::mute, 6, 0, 64, "Palm mute, high E open, in the lists' order (a picking key before each note)", 1 },
-            { Articulation::mute, 6, 0, 64, "Palm mute, high E open, ALTERNATE picking set once", 2 },
-            { Articulation::mute, 0, 0, 64, "Palm mute, low A open, in the lists' order", 1 } };
+            { Articulation::mute, 4, 0, 64, "Palm mute, G string open, down, up, down, up (a stroke key before each note)", 1 },
+            { Articulation::mute, 4, 0, 64, "Palm mute, G string open, PALM MUTE ALTERNATING set once", 2 },
+            { Articulation::mute, 0, 0, 64, "Palm mute, low A open, down, up, down, up", 1 } };
         return check == Check::palmMute ? pm : check == Check::order ? order : g;
     }
 
@@ -33,7 +41,7 @@ namespace guitar::renders::rrcheck
 
     juce::String fileNameFor (Check check)
     {
-        return check == Check::palmMute ? juce::String ("PR7-I Palm Mute Check") : check == Check::order ? juce::String ("PR7-I Order Check") : fileName;
+        return check == Check::palmMute ? juce::String ("PR7-N Palm Mute Check") : check == Check::order ? juce::String ("PR7-N Order Check") : fileName;
     }
 
     std::vector<ProbeTake> takes (Check check)
@@ -81,17 +89,17 @@ namespace guitar::renders::rrcheck
             track.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100).withTimeStamp (ticks (at)));
             track.addEvent (juce::MidiMessage::noteOff (1, note).withTimeStamp (ticks (at + 0.05)));
         };
-        key (keys::legatoOff, 0.75);
         for (const auto& take : takes (check))
         {
             const auto& g = groups (check)[(size_t) take.group];
             const auto slot = take.noteSeconds - noteDelaySeconds;
-            key (keys::forceStringLowA + g.string, slot);
-            key (g.articulation == Articulation::mute ? keys::mute : keys::sustain, slot + 0.05);
+            // The string forced over the note (Keys.h: held), then the articulation's stroke key.
+            track.addEvent (juce::MidiMessage::noteOn (1, keys::forceKey (g.string), (juce::uint8) 100).withTimeStamp (ticks (slot)));
+            track.addEvent (juce::MidiMessage::noteOff (1, keys::forceKey (g.string)).withTimeStamp (ticks (take.noteSeconds + holdFor (check))));
             if (g.style != 2)
-                key (take.stroke == Stroke::down ? keys::pickDown : keys::pickUp, slot + 0.1);
-            else if (take.repeat == 0 && take.stroke == Stroke::down)
-                key (110, slot + 0.1);   // D7: ALTERNATE picking, once (the first note then down, as the reference starts)
+                key (keys::strokeKey (g.articulation, take.stroke), slot + 0.05);
+            else if (take.repeat == 0 && take.stroke == Stroke::down)   // the alternating key, once
+                key (g.articulation == Articulation::mute ? keys::palmMuteAlternate : keys::mainAlternate, slot + 0.05);
             const auto note = noteOf (g.string, g.fret);
             track.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) g.velocity).withTimeStamp (ticks (take.noteSeconds)));
             track.addEvent (juce::MidiMessage::noteOff (1, note).withTimeStamp (ticks (take.noteSeconds + holdFor (check))));

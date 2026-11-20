@@ -5,7 +5,7 @@ namespace guitar
 {
     bool PolyWindow::isKeyswitch (int note) noexcept
     {
-        return note < lowestNote || note >= keyswitch::pickUp;
+        return note < lowestNote || note > highestNote;   // PR7-N: the bass's keys (Keys.h) lie outside its notes
     }
 
     void PolyWindow::prepare (int capacity)

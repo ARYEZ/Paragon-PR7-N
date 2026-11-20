@@ -85,16 +85,15 @@ namespace guitar::noises
             track.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100).withTimeStamp (ticks (at)));
             track.addEvent (juce::MidiMessage::noteOff (1, note).withTimeStamp (ticks (at + 0.05)));
         };
-        key (renders::keys::legatoOff, 0.75);
-        const auto articulation = list == List::powerChordRelease ? powerChordKey : renders::keys::sustain;
         for (const auto& h : hits (list, string))
         {
             const auto slot = h.noteSeconds - renders::noteDelaySeconds;
             if (list != List::fretNoise)
             {
-                key (renders::keys::forceStringLowA + h.string, slot);
-                key (articulation, slot);
-                key (renders::keys::pickDown, slot + 0.05);
+                // PR7-N: the string's force key held over the hit (Keys.h), then MAIN DOWN.
+                track.addEvent (juce::MidiMessage::noteOn (1, keys::forceKey (h.string), (juce::uint8) 100).withTimeStamp (ticks (slot)));
+                track.addEvent (juce::MidiMessage::noteOff (1, keys::forceKey (h.string)).withTimeStamp (ticks (h.offSeconds + 0.1)));
+                key (keys::mainDown, slot + 0.05);
             }
             track.addEvent (juce::MidiMessage::textMetaEvent (6, list == List::fretNoise ? "FRET NOISE " + juce::String (h.repeat + 1)
                                                                     : "S" + juce::String (playerNumber (h.string)) + " F" + juce::String (h.fret)
@@ -117,13 +116,10 @@ namespace guitar::noises
         switch (list)
         {
             case List::pitchedRelease:
-            {
-                const auto which = string == 0 ? juce::String ("low A") : string == numStrings - 1 ? juce::String ("high E") : stringName (string);
-                return "PR7-I Release - String " + juce::String (playerNumber (string)) + " (" + which + ")";
-            }
-            case List::powerChordRelease: return "PR7-I Power Chord Release";
-            case List::unpitched:         return "PR7-I Unpitched Noise";
-            case List::fretNoise:         return "PR7-I Fret Noise";
+                return "PR7-N Release - String " + juce::String (playerNumber (string)) + " (" + stringWhich (string) + ")";
+            case List::powerChordRelease: return "PR7-N Power Chord Release";
+            case List::unpitched:         return "PR7-N Unpitched Noise";
+            case List::fretNoise:         return "PR7-N Fret Noise";
         }
         return {};
     }
@@ -132,14 +128,14 @@ namespace guitar::noises
     {
         if (row < numStrings)
             return { List::pitchedRelease, juce::jmax (0, row) };
-        return { row == numStrings ? List::powerChordRelease : row == numStrings + 1 ? List::unpitched : List::fretNoise, 0 };
+        return { List::unpitched, 0 };
     }
 
     juce::String rowName (int row)
     {
         if (row < numStrings)
             return stringLabel (row);
-        return row == numStrings ? "Power chords" : row == numStrings + 1 ? "Unpitched" : "Fret noise";
+        return "Unpitched";
     }
 
     juce::String folderName (List list)

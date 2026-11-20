@@ -5,9 +5,8 @@
 // THE ROUND-ROBIN CHECK (PR7-I 0.3.0): how many different takes the owner's reference guitar instrument really has for
 // each stroke, before the render lists ask for them (asking for more than it has only renders copies). Our own design.
 //
-//   - THE CHECK LIST: one short MIDI file (about 4 minutes): three notes, each played 16 times with a down stroke, then
-//     16 times with an up stroke: the low A open (sustain, hard), the low A open palm-muted, the D string's 5th fret
-//     (sustain, medium). The same keyswitches as the render lists.
+//   - THE CHECK LIST: one short MIDI file: notes each played 16 times with a down stroke, then 16 times with an up stroke
+//     (PR7-N 0.1.0, the bass's: RoundRobinCheck.cpp). The same keyswitches as the render lists.
 //   - THE ANALYSIS: each note's 16 takes of a stroke compared, from just before the pick for `compareSeconds`: two takes
 //     whose shapes match (a normalised correlation of `sameAbove` or more, the best within a few samples' shift) are the
 //     same recording. Groups of matching takes are the instrument's round-robins; the order they came in shows how it
@@ -46,8 +45,8 @@ namespace guitar::renders::rrcheck
     std::vector<ProbeTake> takes (Check = Check::roundRobin);
     double lengthSeconds (Check = Check::roundRobin);
     juce::MidiFile toMidi (Check = Check::roundRobin);
-    inline const juce::String fileName = "PR7-I Round-Robin Check";
-    juce::String fileNameFor (Check);   // "PR7-I Round-Robin Check", "PR7-I Palm Mute Check"
+    inline const juce::String fileName = "PR7-N Round-Robin Check";
+    juce::String fileNameFor (Check);   // "PR7-N Round-Robin Check", "PR7-N Palm Mute Check"
 
     // Which takes are the same recording: 0, 1, 2... by first appearance, one per take given.
     std::vector<int> sameAs (const std::vector<std::vector<float>>& takes, double sampleRate);

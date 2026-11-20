@@ -31,7 +31,7 @@ namespace
         juce::Random random (7);
         for (const auto& take : renders::takes (a, string))
         {
-            const auto hz = guitar::frequencyOf (take.note() + pitchShift);
+            const auto hz = guitar::soundingFrequency (take.note() + pitchShift);   // (PR7-N: a bass sounds an octave under its key)
             const auto start = (int) ((take.noteSeconds + late) * rate);
             const auto level = 0.2f + 0.3f * (float) take.layer;
             const auto rr = copiesFrom > 0 ? take.roundRobin % copiesFrom : take.roundRobin;
@@ -50,7 +50,7 @@ namespace
 
     juce::File tempGuitar (const juce::String& name)
     {
-        auto f = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("PR7-I tests").getChildFile (name);
+        auto f = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("PR7-N tests").getChildFile (name);
         f.deleteRecursively();
         f.createDirectory();
         return f;
@@ -145,7 +145,6 @@ namespace
             guitar.prepare (sampleRate);
             settings.library = library.get();
             settings.velocityToVolume = 0.0f;
-            settings.keyMap = KeyMap::factory;   // velocity as it comes (the split map has tests of its own)
         }
         // Plays `seconds`, `events` (message, at sample) in it, appending to left / right.
         void play (double seconds, std::vector<std::pair<juce::MidiMessage, int>> events = {})
@@ -186,8 +185,8 @@ TEST_CASE ("FRETTING: open strings low on the neck, the hand's reach, busy strin
     FretSettings forced;
     forced.forceString = 0;
     CHECK (choose (45, none(), 1, forced) == Position { 0, 12 });    // forced onto the low A
-    forced.forceString = 6;
-    CHECK (choose (45, none(), 1, forced) == Position { 2, 0 });     // the high E can't play it: as if not forced
+    forced.forceString = 4;
+    CHECK (choose (45, none(), 1, forced) == Position { 2, 0 });     // the G string can't play it: as if not forced
 
     // Drop A's one-finger power chord at the 5th fret (D5), and the open A5: each note its own string.
     CHECK (chooseChord ({ 38, 45, 50 }, none(), 5, natural) == std::vector<Position> { { 0, 5 }, { 1, 5 }, { 2, 5 } });
@@ -210,69 +209,83 @@ TEST_CASE ("FRETTING: open strings low on the neck, the hand's reach, busy strin
     CHECK (followHand (1, 7, FretMode::polyphonic) == 3);
 }
 
-TEST_CASE ("THE RENDER LIST: every fret, three dynamics, two round-robins of down and up; keyswitches first; one file per string", "[guitar][renders]")
+TEST_CASE ("THE RENDER LIST (PR7-N): every fret, three dynamics, four round-robins of each stroke in a row; keys first; one file per string", "[guitar][renders]")
 {
     const auto list = renders::takes (Articulation::sustain, 0);
-    REQUIRE (list.size() == 25 * 3 * 2 * 2);
+    REQUIRE (list.size() == 25 * 3 * 2 * 4);
     REQUIRE ((int) list.size() == Library::takesPerString (Articulation::sustain));
     CHECK_THAT (list.front().noteSeconds, WithinAbs (2.25, 1e-9));
     CHECK_THAT (list[1].noteSeconds - list[0].noteSeconds, WithinAbs (renders::spec (Articulation::sustain).slotSeconds, 1e-9));
-    CHECK (list[0].stroke == Stroke::down);
-    CHECK (list[1].stroke == Stroke::up);
-    CHECK (list[2].stroke == Stroke::down);   // down, up, down, up: the two round-robins of each stroke
-    CHECK (list[2].roundRobin == 1);
-    CHECK (list[3].layer == 0);
-    CHECK (list[4].layer == 1);
+    for (int i = 0; i < 4; ++i)
+    {
+        CHECK (list[(size_t) i].stroke == Stroke::down);   // the four downs in a row, then the four ups
+        CHECK (list[(size_t) i].roundRobin == i);
+        CHECK (list[(size_t) i + 4].stroke == Stroke::up);
+        CHECK (list[(size_t) i + 4].roundRobin == i);
+    }
+    CHECK (list[7].layer == 0);
+    CHECK (list[8].layer == 1);
     CHECK (list.back().fret == 24);
     CHECK (list.back().note() == 33 + 24);
-    for (const auto& t : list)
-        CHECK (t.velocity() <= 119);   // sustain's velocities (above: the reference's rake and pinch harmonic)
-    CHECK_THAT (renders::lengthSeconds (Articulation::sustain, 0), WithinAbs (2.0 + 300 * 5.5, 1e-9));
-    CHECK (renders::fileName (Articulation::sustain, 0) == "PR7-I Sustain - String 7 (low A)");
-    CHECK (renders::fileName (Articulation::sustain, 3) == "PR7-I Sustain - String 4 (D)");
+    CHECK_THAT (renders::lengthSeconds (Articulation::sustain, 0), WithinAbs (2.0 + 600 * 4.5, 1e-9));
+    CHECK (renders::fileName (Articulation::sustain, 0) == "PR7-N Sustain - String 5 (low A)");
+    CHECK (renders::fileName (Articulation::sustain, 3) == "PR7-N Sustain - String 2 (D)");
+    CHECK (renders::fileName (Articulation::mute, 4) == "PR7-N Mute - String 1 (G)");
 
-    // The MIDI: the string forced (C-2 + string), legato off, then per take the articulation and stroke keys, the note.
+    // The MIDI: the string's force key (127 - string) held from the start to the end; before each take its stroke key
+    // (MAIN DOWN / MAIN UP); the note.
     const auto midi = renders::toMidi (Articulation::sustain, 4);
     juce::MidiMessageSequence seq (*midi.getTrack (0));
     seq.updateMatchedPairs();
     const auto ticksPerSecond = 960.0 * renders::bpm / 60.0;
-    auto notes = 0;
-    auto forced = false, legatoOff = false;
-    double firstNote = -1.0, firstStrokeKey = -1.0;
+    auto notes = 0, downKeys = 0, upKeys = 0, otherKeys = 0;
+    double firstNote = -1.0, firstStrokeKey = -1.0, forcedFrom = -1.0, forcedTo = -1.0;
     for (int i = 0; i < seq.getNumEvents(); ++i)
     {
-        const auto& m = seq.getEventPointer (i)->message;
+        const auto* e = seq.getEventPointer (i);
+        const auto& m = e->message;
         if (! m.isNoteOn())
             continue;
         const auto t = m.getTimeStamp() / ticksPerSecond;
-        if (m.getNoteNumber() == renders::keys::forceStringLowA + 4) forced = true;
-        if (m.getNoteNumber() == renders::keys::legatoOff) legatoOff = true;
-        if (m.getNoteNumber() == renders::keys::pickDown && firstStrokeKey < 0.0) firstStrokeKey = t;
-        if (m.getNoteNumber() >= lowestNote && m.getNoteNumber() <= highestNote)
+        const auto n = m.getNoteNumber();
+        if (n == keys::forceKey (4))
+        {
+            forcedFrom = t;
+            forcedTo = e->noteOffObject->message.getTimeStamp() / ticksPerSecond;
+        }
+        else if (n == keys::mainDown) { ++downKeys; if (firstStrokeKey < 0.0) firstStrokeKey = t; }
+        else if (n == keys::mainUp) ++upKeys;
+        else if (n >= lowestNote && n <= highestNote)
         {
             if (firstNote < 0.0)
             {
                 firstNote = t;
-                CHECK (m.getNoteNumber() == 55);    // the G string open
+                CHECK (n == 55);    // the G string open
                 CHECK (m.getVelocity() == 45);
             }
             ++notes;
         }
+        else
+            ++otherKeys;
     }
-    CHECK (forced);
-    CHECK (legatoOff);
-    CHECK (notes == 300);
+    CHECK (keys::forceKey (4) == 123);
+    CHECK_THAT (forcedFrom, WithinAbs (0.5, 0.001));
+    CHECK (forcedTo > renders::lengthSeconds (Articulation::sustain, 4) - 1.0);
+    CHECK (notes == 600);
+    CHECK (downKeys == 300);
+    CHECK (upKeys == 300);
+    CHECK (otherKeys == 0);
     CHECK_THAT (firstNote, WithinAbs (2.25, 0.001));
     CHECK (firstStrokeKey < firstNote);
 
     // A take's file name, and back.
-    const auto name = renders::takeFileName (Articulation::sustain, list[7]);
-    CHECK (name == "Sustain/s0_f00_l1_u_r1.wav");
+    const auto name = renders::takeFileName (Articulation::sustain, list[9]);
+    CHECK (name == "Sustain/s0_f00_l1_d_r1.wav");
     const auto id = renders::parseTakeFile (juce::File ("/x").getChildFile (name));
     REQUIRE (id);
     CHECK (id->fret == 0);
     CHECK (id->layer == 1);
-    CHECK (id->stroke == Stroke::up);
+    CHECK (id->stroke == Stroke::down);
     CHECK (id->roundRobin == 1);
     CHECK_FALSE (renders::parseTakeFile (juce::File ("/x/Other/s0_f01_l0_u_r0.wav")));
     CHECK_FALSE (renders::parseTakeFile (juce::File ("/x/Sustain/s0_f01_l0_u.wav")));
@@ -303,12 +316,12 @@ TEST_CASE ("IMPORT A RENDER: the offset found, every take cut at its pick, in tu
     const auto report = renders::importAudio (audio.data(), (int) audio.size(), rate, Articulation::sustain, 0, folder, &progress);
     INFO (report.summary());
     REQUIRE (report.ok());
-    CHECK (report.written == 300);
+    CHECK (report.written == 600);
     CHECK (report.copies == 0);
     CHECK (report.outOfTune.isEmpty());
     CHECK_THAT (report.offsetSeconds, WithinAbs (0.023, 0.001));
     CHECK (progress.load() == 1.0f);
-    CHECK (report.summary() == "300 notes imported, all in tune");
+    CHECK (report.summary() == "600 notes imported, all in tune");
 
     // A take's file: mono, the render's rate, its tone starting `preroll` in (the pick's noise kept before it).
     juce::AudioFormatManager formats;
@@ -334,6 +347,16 @@ TEST_CASE ("IMPORT A RENDER: the offset found, every take cut at its pick, in tu
     CHECK (refused.error.contains ("aren't the pitch"));
     CHECK_FALSE (wrongFolder.getChildFile ("Sustain").exists());
 
+    // PR7-N: a render that sounds at its keys' own pitch (an octave above a bass's) is taken too.
+    {
+        const auto keyFolder = tempGuitar ("AtKey");
+        auto atKey = fakeRender (Articulation::sustain, 0, rate, 0.01, 12);
+        const auto r = renders::importAudio (atKey.data(), (int) atKey.size(), rate, Articulation::sustain, 0, keyFolder);
+        INFO (r.summary());
+        CHECK (r.ok());
+        CHECK (r.outOfTune.isEmpty());
+    }
+
     // Not rendered to the end: refused.
     const auto shortRender = fakeRender (Articulation::sustain, 0, rate, 0.01, 0, 0.5);
     CHECK (renders::importAudio (shortRender.data(), (int) shortRender.size(), rate, Articulation::sustain, 0, wrongFolder).error.contains ("shorter"));
@@ -344,8 +367,8 @@ TEST_CASE ("IMPORT A RENDER: the offset found, every take cut at its pick, in tu
 
     // THE LIBRARY: the folder loaded; the string's 150 takes; another string's notes played by stand-ins.
     const auto library = Library::load (folder);
-    CHECK (library->count (Articulation::sustain, 0) == 300);
-    CHECK (library->total() == 300);
+    CHECK (library->count (Articulation::sustain, 0) == 600);
+    CHECK (library->total() == 600);
     const auto exact = library->find (Articulation::sustain, 0, 5, 1, Stroke::up);
     REQUIRE (exact.take != nullptr);
     CHECK (exact.exact);
@@ -414,9 +437,9 @@ TEST_CASE ("THE ENGINE: alternate picking; DOWN / UP; velocity picks the dynamic
             q.play (0.01, { { Player::off (45), 0 }, { Player::on (45, 120), 1 } });
             order.push_back (q.guitar.lastTake());
         }
-        CHECK (std::set<const Take*> (order.begin(), order.begin() + 4).size() == 4);
-        for (size_t i = 4; i < order.size(); ++i)
-            CHECK (order[i] == order[i - 4]);
+        CHECK (std::set<const Take*> (order.begin(), order.begin() + 8).size() == 8);   // (PR7-N: four takes a stroke)
+        for (size_t i = 8; i < order.size(); ++i)
+            CHECK (order[i] == order[i - 8]);
     }
     // DOWN: every stroke a down stroke, its two takes in turn; the soft and medium dynamics by velocity.
     p.settings.pick = PickMode::down;
@@ -428,8 +451,8 @@ TEST_CASE ("THE ENGINE: alternate picking; DOWN / UP; velocity picks the dynamic
     }
     for (size_t i = 1; i < downs.size(); ++i)
         CHECK (downs[i] != downs[i - 1]);
-    for (size_t i = 2; i < downs.size(); ++i)
-        CHECK (downs[i] == downs[i - 2]);
+    for (size_t i = 4; i < downs.size(); ++i)
+        CHECK (downs[i] == downs[i - 4]);
     p.left.clear();
     p.play (0.2, { { Player::off (45), 0 }, { Player::on (45, 40), 1 } });
     CHECK (p.guitar.lastStroke() == Stroke::down);
@@ -449,38 +472,60 @@ TEST_CASE ("THE ENGINE: alternate picking; DOWN / UP; velocity picks the dynamic
     CHECK (layerFor (102) == 2);
 }
 
-TEST_CASE ("THE ENGINE: the reference's keyswitches (force string, hand position, picking); chords; the hand", "[guitar][engine]")
+TEST_CASE ("THE ENGINE (PR7-N): the reference bass's keys (force string while held, MAIN / PALM MUTE with their picking); chords", "[guitar][engine]")
 {
-    Player p;
-    // Force string C-2 (the low A): A2 at its 12th fret. G-2 turns it off.
-    p.play (0.1, { { Player::on (0, 100), 0 }, { Player::on (45), 10 } });
+    Player p (true);
+    // Force string 127 (the low A), held: A1 (45) at its 12th fret; let go, not forced any more.
+    p.play (0.1, { { Player::on (keys::forceKey (0), 100), 0 }, { Player::on (45), 10 } });
     CHECK (p.guitar.lastPosition() == Position { 0, 12 });
-    p.play (1.2, { { Player::off (45), 0 }, { Player::on (7, 100), 5 } });   // (a second's rest: the AUTO hand goes home)
+    CHECK (p.guitar.getForcedString (p.settings) == 0);
+    p.play (1.2, { { Player::off (45), 0 }, { Player::off (keys::forceKey (0)), 5 } });   // (a second's rest: the AUTO hand goes home)
+    CHECK (p.guitar.getForcedString (p.settings) == -1);
     p.play (0.1, { { Player::on (45), 0 } });
     CHECK (p.guitar.lastPosition() == Position { 2, 0 });
+    // 123 the G string: D2 (50) can't be played there (below its open string), so as if not forced.
+    p.play (0.1, { { Player::off (45), 0 }, { Player::on (keys::forceKey (4), 100), 2 }, { Player::on (50), 5 } });
+    CHECK (p.guitar.lastPosition() == Position { 3, 0 });
+    p.play (0.1, { { Player::off (50), 0 }, { Player::off (keys::forceKey (4)), 1 } });
 
-    // Hand position A#-2 at velocity 7: E3 at the A string's 7th fret, not the D string's 2nd; B-2: AUTO again.
-    p.play (0.1, { { Player::off (45), 0 }, { Player::on (10, 7), 5 }, { Player::on (52), 10 } });
-    CHECK (p.guitar.lastPosition() == Position { 2, 7 });
-    CHECK (p.guitar.getHand() == 7);
-    p.play (1.2, { { Player::off (52), 0 }, { Player::on (11, 100), 5 } });   // and a second's rest: the hand goes home
-    p.play (0.1, { { Player::on (52), 0 } });
-    CHECK (p.guitar.lastPosition() == Position { 3, 2 });
-
-    // Picking keyswitch C#7 (down): every stroke down; changing the page's setting wins again.
-    p.play (0.1, { { Player::off (52), 0 }, { Player::on (109, 100), 2 }, { Player::on (45), 5 } });
+    // MAIN DOWN (D-2): every stroke down; changing the page's setting wins again.
+    p.play (0.1, { { Player::on (keys::mainDown, 100), 2 }, { Player::on (45), 5 } });
     p.play (0.1, { { Player::off (45), 0 }, { Player::on (45), 5 } });
     CHECK (p.guitar.lastStroke() == Stroke::down);
+    CHECK (p.guitar.lastArticulation() == Articulation::sustain);
     p.settings.pick = PickMode::up;
     p.play (0.1, { { Player::off (45), 0 }, { Player::on (45), 5 } });
     CHECK (p.guitar.lastStroke() == Stroke::up);
+    p.settings.pick = PickMode::alternate;
+
+    // PALM MUTE UP (F#-1): palm-muted up strokes; MAIN ALTERNATING (C-2): sustain, alternating again.
+    p.play (0.1, { { Player::off (45), 0 }, { Player::on (keys::palmMuteUp, 100), 2 }, { Player::on (45), 5 } });
+    CHECK (p.guitar.lastArticulation() == Articulation::mute);
+    CHECK (p.guitar.lastStroke() == Stroke::up);
+    p.play (0.1, { { Player::off (45), 0 }, { Player::on (45), 5 } });
+    CHECK (p.guitar.lastStroke() == Stroke::up);
+    // SLAP (E-2) isn't rendered: latched (the screen shows it), the palm mute plays on.
+    p.play (0.1, { { Player::off (45), 0 }, { Player::on (keys::slap, 100), 2 }, { Player::on (45), 5 } });
+    CHECK (p.guitar.getLatchedKey() == keys::slap);
+    CHECK (p.guitar.getArticulationKey() == keys::palmMuteUp);
+    CHECK (p.guitar.lastArticulation() == Articulation::mute);
+    p.play (0.1, { { Player::off (45), 0 }, { Player::on (keys::mainAlternate, 100), 2 }, { Player::on (45), 5 } });
+    CHECK (p.guitar.lastArticulation() == Articulation::sustain);
+    const auto first = p.guitar.lastStroke();
+    p.play (0.1, { { Player::off (45), 0 }, { Player::on (45), 5 } });
+    CHECK (p.guitar.lastStroke() != first);
+    // Keys outside the map, and the map's own above the notes (98 DEAD PALM REST), play nothing.
+    const auto voices = p.guitar.getActiveVoices();
+    p.play (0.1, { { Player::on (25, 100), 0 }, { Player::on (keys::deadPalmRest, 100), 2 }, { Player::on (100, 100), 3 } });
+    CHECK (p.guitar.getActiveVoices() == voices);
+    p.play (0.1, { { Player::off (45), 0 } });
 
     // A chord struck together: each note its own string, all sounding.
     p.left.clear();
     p.play (0.3, { { Player::off (45), 0 }, { Player::on (33), 100 }, { Player::on (40), 100 }, { Player::on (45), 100 } });
     for (int s = 0; s < 3; ++s)
         CHECK (p.guitar.getSounding (s).fret == 0);
-    CHECK (levelAt (p.left, 55.0, 4800, 9600) > 0.1);
+    CHECK (levelAt (p.left, 55.0, 4800, 9600) > 0.1);   // (the tone guitar plays at its keys' pitch)
     CHECK (levelAt (p.left, guitar::frequencyOf (40), 4800, 9600) > 0.1);
     CHECK (levelAt (p.left, 110.0, 4800, 9600) > 0.1);
 
@@ -504,9 +549,9 @@ TEST_CASE ("THE ENGINE: a take read past its head from disk, as a whole note", "
     p.settings.streamer = &streamer;
     p.settings.waitForDisk = true;
     p.play (2.0, { { Player::on (45, 120), 0 } });   // the A string open (its renders are 8 kHz: played at 48 kHz)
-    const auto atPitch = levelAt (p.left, 110.0, (size_t) (1.0 * sampleRate), (size_t) (0.9 * sampleRate));
-    CHECK (atPitch > 0.2);                                                                                   // the A2, a second in
-    CHECK (levelAt (p.left, 116.5, (size_t) (1.0 * sampleRate), (size_t) (0.9 * sampleRate)) < 0.1 * atPitch);   // not a semitone off
+    const auto atPitch = levelAt (p.left, 55.0, (size_t) (1.0 * sampleRate), (size_t) (0.9 * sampleRate));
+    CHECK (atPitch > 0.2);                                                                                   // the A1 (it sounds an octave under its key), a second in
+    CHECK (levelAt (p.left, 58.27, (size_t) (1.0 * sampleRate), (size_t) (0.9 * sampleRate)) < 0.1 * atPitch);   // not a semitone off
     CHECK (rms (p.left, (size_t) (1.5 * sampleRate), (size_t) (1.9 * sampleRate)) > 0.1);   // well past the 0.25 s head
     CHECK (streamer.getUnderruns() == 0);
     folder.getParentDirectory().deleteRecursively();
@@ -553,10 +598,15 @@ TEST_CASE ("THE NOISE LISTS 0.6.0: their layouts (fixed once sent), notes, keysw
     // How many hits each list has, and how long it is: the layouts sent to the owner (November 2026).
     CHECK (hits (List::pitchedRelease, 0).size() == 25 * 4);
     CHECK (hits (List::powerChordRelease).size() == 3 * 16 * 3);
-    CHECK (hits (List::unpitched).size() == 7 * 4 * 12);
+    CHECK (hits (List::unpitched).size() == numStrings * 4 * 12);
     CHECK (hits (List::fretNoise).size() == 32);
     CHECK_THAT (lengthSeconds (List::pitchedRelease, 0), Catch::Matchers::WithinAbs (2.0 + 100 * 1.25 + 1.0, 1e-9));
-    CHECK_THAT (lengthSeconds (List::unpitched), Catch::Matchers::WithinAbs (2.0 + 336 * 1.25 + 1.0, 1e-9));
+    CHECK_THAT (lengthSeconds (List::unpitched), Catch::Matchers::WithinAbs (2.0 + 240 * 1.25 + 1.0, 1e-9));
+    // PR7-N's NOISES rows: the five strings' releases, then the unpitched noises (no power chords or fret noise).
+    CHECK (numRows == 6);
+    CHECK (rowList (4).list == List::pitchedRelease);
+    CHECK (rowList (4).string == 4);
+    CHECK (rowList (5).list == List::unpitched);
 
     // Each hit: its slot, the note held 0.5 s, and its release (or fret noise) clear of the next hit's keyswitches.
     for (const auto list : { List::pitchedRelease, List::powerChordRelease, List::unpitched, List::fretNoise })
@@ -582,14 +632,14 @@ TEST_CASE ("THE NOISE LISTS 0.6.0: their layouts (fixed once sent), notes, keysw
     // keys (not for fret noise); legato off at the start.
     for (const auto list : { List::pitchedRelease, List::powerChordRelease, List::unpitched, List::fretNoise })
     {
-        auto file = toMidi (list, 5);
+        auto file = toMidi (list, 4);
         file.convertTimestampTicksToSeconds();
         const auto& track = *file.getTrack (0);
         std::vector<std::pair<double, int>> ons;
         for (int i = 0; i < track.getNumEvents(); ++i)
             if (const auto& m = track.getEventPointer (i)->message; m.isNoteOn())
                 ons.push_back ({ m.getTimeStamp(), m.getNoteNumber() * 1000 + m.getVelocity() });
-        const auto expect = hits (list, 5);
+        const auto expect = hits (list, 4);
         auto found = 0;
         for (const auto& h : expect)
         {
@@ -597,18 +647,17 @@ TEST_CASE ("THE NOISE LISTS 0.6.0: their layouts (fixed once sent), notes, keysw
             for (const auto& [t, nv] : ons)
                 if (std::abs (t - h.noteSeconds) < 1e-6 && nv == h.note * 1000 + v)
                     ++found;
-            if (list != List::fretNoise)
+            if (list != List::fretNoise)   // PR7-N: the string's force key at the slot's start, MAIN DOWN just after
             {
-                const auto articulation = list == List::powerChordRelease ? 15 : 12;
-                for (const auto k : { renders::keys::forceStringLowA + h.string, articulation })
-                    CHECK (std::count_if (ons.begin(), ons.end(), [&] (const auto& e) { return std::abs (e.first - (h.noteSeconds - 0.25)) < 1e-6 && e.second / 1000 == k; }) == 1);
+                CHECK (std::count_if (ons.begin(), ons.end(), [&] (const auto& e) { return std::abs (e.first - (h.noteSeconds - 0.25)) < 1e-6 && e.second / 1000 == keys::forceKey (h.string); }) == 1);
+                CHECK (std::count_if (ons.begin(), ons.end(), [&] (const auto& e) { return std::abs (e.first - (h.noteSeconds - 0.2)) < 1e-6 && e.second / 1000 == keys::mainDown; }) == 1);
             }
         }
         CHECK (found == (int) expect.size());
-        CHECK (std::count_if (ons.begin(), ons.end(), [] (const auto& e) { return e.second / 1000 == renders::keys::legatoOff; }) == 1);
     }
-    CHECK (fileName (List::pitchedRelease, 0) == "PR7-I Release - String 7 (low A)");
-    CHECK (fileName (List::fretNoise) == "PR7-I Fret Noise");
+    CHECK (fileName (List::pitchedRelease, 0) == "PR7-N Release - String 5 (low A)");
+    CHECK (fileName (List::pitchedRelease, 4) == "PR7-N Release - String 1 (G)");
+    CHECK (fileName (List::fretNoise) == "PR7-N Fret Noise");
 }
 
 TEST_CASE ("THE NOISE IMPORT 0.6.0: releases cut at their note-offs, copies left out, renders made the wrong way refused", "[guitar][noises]")
@@ -676,7 +725,7 @@ TEST_CASE ("THE NOISE IMPORT 0.6.0: releases cut at their note-offs, copies left
         INFO (report.error);
         REQUIRE (report.ok());
         CHECK (report.written == 6);
-        CHECK (report.silent == 336 - 42);
+        CHECK (report.silent == 240 - 30);
         CHECK (Library::load (folder)->noiseCount (List::unpitched) == 6);
         // ...but a noise on every hit means the pitched releases weren't turned down: refused.
         const auto wrong = fakeNoiseRender (List::unpitched, 0, rate, 0.0, 6, 1);
@@ -727,7 +776,7 @@ namespace
     }
 }
 
-TEST_CASE ("THE NOISES 0.6.0: a release at each note-off, by how long the note was held; power chords; fret noise; scrapes", "[guitar][engine][noises]")
+TEST_CASE ("THE NOISES 0.6.0: a release at each note-off, by how long the note was held; scrapes", "[guitar][engine][noises]")
 {
     using noises::List;
     const auto release = noiseTake (3000.0);
@@ -784,7 +833,7 @@ TEST_CASE ("THE NOISES 0.6.0: a release at each note-off, by how long the note w
     {
         Player m;
         m.library->addNoise (List::pitchedRelease, 0, 0, release);
-        m.play (0.4, { { Player::on (13), 0 }, { Player::on (33), 10 }, { Player::off (33), (int) (0.2 * sampleRate) } });   // C#-1: palm mute
+        m.play (0.4, { { Player::on (keys::palmMuteAlternate), 0 }, { Player::on (33), 10 }, { Player::off (33), (int) (0.2 * sampleRate) } });   // PR7-N: F-1, palm mute
         CHECK (m.guitar.lastNoise().count == 0);
         Player o;
         o.library->addNoise (List::pitchedRelease, 0, 0, release);
@@ -793,46 +842,14 @@ TEST_CASE ("THE NOISES 0.6.0: a release at each note-off, by how long the note w
         CHECK (o.guitar.lastNoise().count == 0);   // (the low A was already stopped by the A string's note)
     }
 
-    SECTION ("A power chord: one release of its own (by the root), else each string's")
+    // (PR7-I's power-chord and F#0 fret-noise sections: the bass has neither key, Keys.h.)
+    SECTION ("PR7-N: F#0 is no key of the bass's: no fret noise, no note")
     {
-        const auto power = noiseTake (2000.0);
         Player p;
-        p.library->addNoise (List::powerChordRelease, 0, 0, power);
-        for (int s = 0; s < 3; ++s)
-            p.library->addNoise (List::pitchedRelease, s, 0, release);
-        p.play (0.4, { { Player::on (15), 0 }, { Player::on (33), 10 }, { Player::off (33), (int) (0.2 * sampleRate) } });   // D#-1: power chords
-        CHECK (p.guitar.lastNoise().count == 1);
-        CHECK (p.guitar.lastNoise().take == power.get());
-        Player q;
-        for (int s = 0; s < 3; ++s)
-            q.library->addNoise (List::pitchedRelease, s, 0, release);
-        q.play (0.4, { { Player::on (15), 0 }, { Player::on (33), 10 }, { Player::off (33), (int) (0.2 * sampleRate) } });
-        CHECK (q.guitar.lastNoise().count == 3);   // the root, the fifth and the octave: each string's own
-    }
-
-    SECTION ("F#0: fret noise, its recordings in turn, by velocity; none at 0")
-    {
-        const auto a = noiseTake (1000.0), b = noiseTake (1500.0), c = noiseTake (2500.0);
-        Player p;
-        for (const auto& t : { a, b, c })
-            p.library->addNoise (List::fretNoise, 0, 0, t);
-        std::vector<const Take*> order;
-        std::vector<float> gains;
-        for (const auto velocity : { 127, 127, 127, 40 })
-        {
-            p.play (0.2, { { Player::on (30, velocity), 0 } });
-            order.push_back (p.guitar.lastNoise().take);
-            gains.push_back (p.guitar.lastNoise().gain);
-        }
-        CHECK (order == std::vector<const Take*> { a.get(), b.get(), c.get(), a.get() });
-        CHECK_THAT (gains[0], Catch::Matchers::WithinAbs (1.0, 1e-6));
-        CHECK_THAT (db (gains[3]), Catch::Matchers::WithinAbs (db (std::pow (40.0 / 127.0, 0.85)), 0.01));   // ~ -8.5 dB
-        CHECK (p.guitar.getActiveVoices() == 0);   // (no note played)
-        Player z;
-        z.library->addNoise (List::fretNoise, 0, 0, a);
-        z.settings.fretNoise = 0.0f;
-        z.play (0.2, { { Player::on (30, 127), 0 } });
-        CHECK (z.guitar.lastNoise().count == 0);
+        p.library->addNoise (List::fretNoise, 0, 0, noiseTake (1000.0));
+        p.play (0.2, { { Player::on (30, 127), 0 } });
+        CHECK (p.guitar.lastNoise().count == 0);
+        CHECK (p.guitar.getActiveVoices() == 0);
     }
 
     SECTION ("SCRAPES: an unpitched noise with a release now and then, the next in turn, never two releases running")
@@ -905,9 +922,9 @@ TEST_CASE ("THE ENGINE: streaming live (not waiting for the disk), the note whol
     for (const auto x : p.left)
         peak = std::max (peak, std::abs (x));
     CHECK (peak < 1.5f);
-    const auto atPitch = levelAt (p.left, 110.0, (size_t) (1.0 * sampleRate), (size_t) (0.9 * sampleRate));
-    CHECK (atPitch > 0.2);                                                                                   // the A2, a second in
-    CHECK (levelAt (p.left, 116.5, (size_t) (1.0 * sampleRate), (size_t) (0.9 * sampleRate)) < 0.1 * atPitch);   // not a semitone off
+    const auto atPitch = levelAt (p.left, 55.0, (size_t) (1.0 * sampleRate), (size_t) (0.9 * sampleRate));
+    CHECK (atPitch > 0.2);                                                                                   // the A1 (it sounds an octave under its key), a second in
+    CHECK (levelAt (p.left, 58.27, (size_t) (1.0 * sampleRate), (size_t) (0.9 * sampleRate)) < 0.1 * atPitch);   // not a semitone off
     CHECK (rms (p.left, (size_t) (1.5 * sampleRate), (size_t) (1.9 * sampleRate)) > 0.1);
     INFO ("underruns " << streamer.getUnderruns());
     folder.getParentDirectory().deleteRecursively();
@@ -915,7 +932,7 @@ TEST_CASE ("THE ENGINE: streaming live (not waiting for the disk), the note whol
 
 TEST_CASE ("IMPORT A RENDER 0.3.0: round-robins that are copies of earlier ones left out, and said", "[guitar][renders]")
 {
-    // An instrument with only one take per stroke, asked for two: round-robin 2 copies 1.
+    // An instrument with only one take per stroke, asked for four: round-robins 2-4 copies of 1.
     constexpr double rate = 8000.0;
     const auto folder = tempGuitar ("Copies");
     const auto audio = fakeRender (Articulation::sustain, 1, rate, 0.01, 0, 1.0, 1);
@@ -923,9 +940,9 @@ TEST_CASE ("IMPORT A RENDER 0.3.0: round-robins that are copies of earlier ones 
     INFO (report.summary());
     REQUIRE (report.ok());
     CHECK (report.written == 150);
-    CHECK (report.copies == 150);
+    CHECK (report.copies == 450);
     CHECK (report.fewestRoundRobins == 1);
-    CHECK (report.summary() == "150 notes imported, all in tune, 150 copies of other takes left out (as few as 1 different per stroke)");
+    CHECK (report.summary() == "150 notes imported, all in tune, 450 copies of other takes left out (as few as 1 different per stroke)");
     CHECK (folder.getChildFile ("Sustain/s1_f03_l1_d_r0.wav").existsAsFile());
     CHECK_FALSE (folder.getChildFile ("Sustain/s1_f03_l1_d_r1.wav").exists());
     // The guitar then plays the one it has.
@@ -938,7 +955,7 @@ TEST_CASE ("IMPORT A RENDER 0.3.0: round-robins that are copies of earlier ones 
     {
         const auto again = tempGuitar ("Reimport");
         const auto full = fakeRender (Articulation::sustain, 1, rate, 0.01);
-        REQUIRE (renders::importAudio (full.data(), (int) full.size(), rate, Articulation::sustain, 1, again).written == 300);
+        REQUIRE (renders::importAudio (full.data(), (int) full.size(), rate, Articulation::sustain, 1, again).written == 600);
         const auto other = fakeRender (Articulation::sustain, 2, rate, 0.01);
         REQUIRE (renders::importAudio (other.data(), (int) other.size(), rate, Articulation::sustain, 2, again).ok());
         CHECK (again.getChildFile ("Sustain/s1_f03_l1_d_r1.wav").existsAsFile());
@@ -946,7 +963,7 @@ TEST_CASE ("IMPORT A RENDER 0.3.0: round-robins that are copies of earlier ones 
         CHECK_FALSE (again.getChildFile ("Sustain/s1_f03_l1_d_r1.wav").exists());
         const auto reloaded = Library::load (again);
         CHECK (reloaded->count (Articulation::sustain, 1) == 150);
-        CHECK (reloaded->count (Articulation::sustain, 2) == 300);
+        CHECK (reloaded->count (Articulation::sustain, 2) == 600);
     }
     folder.getParentDirectory().deleteRecursively();
 }
@@ -955,9 +972,9 @@ TEST_CASE ("THE ROUND-ROBIN CHECK: its list; how many different takes each strok
 {
     using namespace renders::rrcheck;
     const auto list = takes();
-    REQUIRE (list.size() == 3 * 2 * repeats);
-    CHECK_THAT (lengthSeconds() / 60.0, WithinAbs (4.03, 0.01));
-    // Its MIDI: per take the string forced, the articulation, the stroke, then the note.
+    REQUIRE (list.size() == 9 * 2 * repeats);   // (PR7-N: the bass's check, RoundRobinCheck.cpp)
+    CHECK_THAT (lengthSeconds() / 60.0, WithinAbs (12.03, 0.01));
+    // Its MIDI: per take the string forced, the articulation's stroke key, then the note.
     const auto midi = toMidi();
     juce::MidiMessageSequence seq (*midi.getTrack (0));
     auto notes = 0, mutes = 0;
@@ -965,10 +982,10 @@ TEST_CASE ("THE ROUND-ROBIN CHECK: its list; how many different takes each strok
         if (const auto& m = seq.getEventPointer (i)->message; m.isNoteOn())
         {
             notes += m.getNoteNumber() >= lowestNote && m.getNoteNumber() <= highestNote ? 1 : 0;
-            mutes += m.getNoteNumber() == renders::keys::mute ? 1 : 0;
+            mutes += m.getNoteNumber() == keys::palmMuteDown || m.getNoteNumber() == keys::palmMuteUp ? 1 : 0;
         }
-    CHECK (notes == 96);
-    CHECK (mutes == 32);
+    CHECK (notes == 288);
+    CHECK (mutes == 64);
 
     // A made-up render: the first note's downs 4 recordings in turn, its ups 4 in turn; the palm mute's 3 in no fixed
     // order; the D string's 8 in turn. Each recording its own overtone (and so its own shape).
@@ -978,7 +995,7 @@ TEST_CASE ("THE ROUND-ROBIN CHECK: its list; how many different takes each strok
     for (const auto& t : list)
     {
         const auto& g = groups()[(size_t) t.group];
-        const auto recording = t.group == 0 ? t.repeat % 4 : t.group == 1 ? random.nextInt (3) : t.repeat % 8;
+        const auto recording = t.group == 0 ? t.repeat % 4 : t.group == 2 ? random.nextInt (3) : t.repeat % 8;
         const auto hz = guitar::frequencyOf (noteOf (g.string, g.fret));
         const auto start = (int) ((t.noteSeconds + 0.012) * rate);
         for (int i = 0; i < (int) (holdSeconds * rate); ++i)
@@ -989,14 +1006,14 @@ TEST_CASE ("THE ROUND-ROBIN CHECK: its list; how many different takes each strok
     const auto report = analyse (audio.data(), (int) audio.size(), rate);
     INFO (report.summary());
     REQUIRE (report.error.isEmpty());
-    REQUIRE (report.results.size() == 6);
+    REQUIRE (report.results.size() == 18);
     CHECK (report.results[0].different == 4);
     CHECK (report.results[0].inTurn);
     CHECK (report.results[0].describe().startsWith ("Sustain, low A open, hard, down: 4 different, in turn (1 2 3 4 1 2 3 4"));
     CHECK (report.results[1].stroke == Stroke::up);
-    CHECK (report.results[2].different == 3);
-    CHECK (report.results[4].different == 8);
-    CHECK (report.results[4].inTurn);
+    CHECK (report.results[4].different == 3);
+    CHECK (report.results[2].different == 8);
+    CHECK (report.results[2].inTurn);
     CHECK (report.fewest() == 3);
     std::vector<float> silence (audio.size(), 0.0f);
     CHECK (analyse (silence.data(), (int) silence.size(), rate).error.isNotEmpty());
@@ -1009,7 +1026,7 @@ TEST_CASE ("THE PALM MUTE CHECK 0.6.1: its list; how alike its copies and differ
     const auto list = takes (pm);
     REQUIRE (list.size() == 5 * 2 * repeats);
     CHECK_THAT (lengthSeconds (pm), WithinAbs (2.0 + 160 * 1.6, 1e-9));
-    CHECK (fileNameFor (pm) == "PR7-I Palm Mute Check");
+    CHECK (fileNameFor (pm) == "PR7-N Palm Mute Check");
     // Its MIDI: every note palm-muted (C#-1 before it), the high E's first.
     auto file = toMidi (pm);
     file.convertTimestampTicksToSeconds();
@@ -1019,8 +1036,8 @@ TEST_CASE ("THE PALM MUTE CHECK 0.6.1: its list; how alike its copies and differ
         if (const auto& m = seq.getEventPointer (i)->message; m.isNoteOn())
         {
             notes += m.getNoteNumber() >= lowestNote && m.getNoteNumber() <= highestNote ? 1 : 0;
-            mutes += m.getNoteNumber() == renders::keys::mute ? 1 : 0;
-            highE += m.getNoteNumber() == renders::keys::forceStringLowA + 6 ? 1 : 0;
+            mutes += m.getNoteNumber() == keys::palmMuteDown || m.getNoteNumber() == keys::palmMuteUp ? 1 : 0;
+            highE += m.getNoteNumber() == keys::forceKey (4) ? 1 : 0;   // (PR7-N: the G string's)
         }
     CHECK (notes == 160);
     CHECK (mutes == 160);
@@ -1035,15 +1052,15 @@ TEST_CASE ("THE PALM MUTE CHECK 0.6.1: its list; how alike its copies and differ
         CHECK (orderTakes[1].stroke == Stroke::up);
         CHECK (orderTakes[1].group == 0);
         CHECK_THAT (lengthSeconds (oc) / 60.0, WithinAbs ((2.0 + 96 * 1.6) / 60.0, 1e-9));
-        CHECK (fileNameFor (oc) == "PR7-I Order Check");
+        CHECK (fileNameFor (oc) == "PR7-N Order Check");
         auto f = toMidi (oc);
         juce::MidiMessageSequence orderSeq (*f.getTrack (0));
         auto pickKeys = 0, alternateKeys = 0, played = 0;
         for (int i = 0; i < orderSeq.getNumEvents(); ++i)
             if (const auto& m = orderSeq.getEventPointer (i)->message; m.isNoteOn())
             {
-                pickKeys += m.getNoteNumber() == renders::keys::pickDown || m.getNoteNumber() == renders::keys::pickUp ? 1 : 0;
-                alternateKeys += m.getNoteNumber() == 110 ? 1 : 0;
+                pickKeys += m.getNoteNumber() == keys::palmMuteDown || m.getNoteNumber() == keys::palmMuteUp ? 1 : 0;
+                alternateKeys += m.getNoteNumber() == keys::palmMuteAlternate ? 1 : 0;
                 played += m.getNoteNumber() >= lowestNote && m.getNoteNumber() <= highestNote ? 1 : 0;
             }
         CHECK (played == 96);
@@ -1052,8 +1069,7 @@ TEST_CASE ("THE PALM MUTE CHECK 0.6.1: its list; how alike its copies and differ
     }
 
     // The round-robin check is just as it was (the owner's render of it still analyses the same).
-    CHECK (takes().size() == 3 * 2 * repeats);
-    CHECK_THAT (lengthSeconds() / 60.0, WithinAbs (4.03, 0.01));
+    CHECK (takes().size() == 9 * 2 * repeats);
 
     // A made-up render. The high E open's downs: 2 recordings in turn (the rest exact copies); its ups: 6. The B
     // string's downs: 2 recordings that differ very slightly (about 0.995 alike: 0.6.4 keeps them apart, where the old
@@ -1159,11 +1175,11 @@ TEST_CASE ("THE ENGINE 0.3.0: BORROWING: with VARIATION, the neighbouring dynami
             levels.push_back (levelAt (p.left, guitar::frequencyOf (50), 4800, 4800));   // (after the last note's release)
         }
     };
-    // VARIATION 0: only its own two takes, in turn, at the medium dynamic's level (0.5 here).
+    // VARIATION 0: only its own four takes, in turn, at the medium dynamic's level (0.5 here).
     std::set<const Take*> own;
     std::vector<double> ownLevels;
     chug (0.0f, own, ownLevels);
-    CHECK (own.size() == 2);
+    CHECK (own.size() == 4);
     for (const auto l : ownLevels)
         CHECK_THAT (l, WithinAbs (0.5, 0.01));
     // Full: now and then (about a third of the notes) the soft and hard dynamics' takes and the 4th and 6th frets' instead,
@@ -1176,24 +1192,23 @@ TEST_CASE ("THE ENGINE 0.3.0: BORROWING: with VARIATION, the neighbouring dynami
         CHECK (std::abs (db (l / 0.5)) < 0.7);
 }
 
-TEST_CASE ("RENDER LISTS 0.3.0: sustain's exactly as the owner rendered them; palm mute's with 8 round-robins and short slots", "[guitar][renders]")
+TEST_CASE ("RENDER LISTS (PR7-N 0.1.0): sustain's and palm mute's layouts", "[guitar][renders]")
 {
-    // SUSTAIN: unchanged (the owner's renders were made from these): 3 dynamics at 45 / 85 / 118, 2 round-robins of each
-    // stroke, 4 s notes in 5.5 s slots, the C-1 keyswitch.
+    // SUSTAIN: 3 dynamics at 45 / 85 / 118, 4 round-robins of each stroke, 3.5 s notes in 4.5 s slots.
     const auto& sustain = renders::spec (Articulation::sustain);
     CHECK (sustain.layers == 3);
     CHECK (sustain.velocities[0] == 45);
     CHECK (sustain.velocities[1] == 85);
     CHECK (sustain.velocities[2] == 118);
-    CHECK (sustain.roundRobins == 2);
-    CHECK (sustain.holdSeconds == 4.0);
-    CHECK (sustain.slotSeconds == 5.5);
-    CHECK (sustain.key == 12);
+    CHECK (sustain.roundRobins == 4);
+    CHECK (sustain.holdSeconds == 3.5);
+    CHECK (sustain.slotSeconds == 4.5);
+    CHECK (sustain.key == keys::mainAlternate);
     CHECK (renders::layerFor (Articulation::sustain, 64) == 0);
     CHECK (renders::layerFor (Articulation::sustain, 65) == 1);
     CHECK (renders::layerFor (Articulation::sustain, 102) == 2);
 
-    // MUTE: its own file per string, 8 round-robins of each stroke, 1 s notes in 1.6 s slots, the factory C#-1.
+    // MUTE: its own file per string, 8 round-robins of each stroke, 1 s notes in 1.6 s slots, PALM MUTE DOWN / UP keys.
     const auto& mute = renders::spec (Articulation::mute);
     const auto list = renders::takes (Articulation::mute, 0);
     CHECK ((int) list.size() == 25 * mute.layers * 2 * 8);
@@ -1209,14 +1224,14 @@ TEST_CASE ("RENDER LISTS 0.3.0: sustain's exactly as the owner rendered them; pa
     }
     CHECK (list[16].stroke == Stroke::down);
     CHECK_THAT (list[1].noteSeconds - list[0].noteSeconds, WithinAbs (1.6, 1e-9));
-    CHECK (renders::fileName (Articulation::mute, 0) == "PR7-I Mute v2 - String 7 (low A)");   // (0.6.2: the new order)
+    CHECK (renders::fileName (Articulation::mute, 0) == "PR7-N Mute - String 5 (low A)");
     const auto name = renders::takeFileName (Articulation::mute, list[15]);
     CHECK (name == "Mute/s0_f00_l0_u_r7.wav");
     const auto id = renders::parseTakeFile (juce::File ("/x").getChildFile (name));
     REQUIRE (id);
     CHECK (id->articulation == Articulation::mute);
     CHECK (id->roundRobin == 7);
-    CHECK_FALSE (renders::parseTakeFile (juce::File ("/x/Sustain/s0_f00_l0_u_r7.wav")));   // sustain has two round-robins
+    CHECK_FALSE (renders::parseTakeFile (juce::File ("/x/Sustain/s0_f00_l0_u_r7.wav")));   // sustain has four round-robins
     const auto midi = renders::toMidi (Articulation::mute, 0);
     juce::MidiMessageSequence seq (*midi.getTrack (0));
     seq.updateMatchedPairs();
@@ -1224,7 +1239,7 @@ TEST_CASE ("RENDER LISTS 0.3.0: sustain's exactly as the owner rendered them; pa
     for (int i = 0; i < seq.getNumEvents(); ++i)
         if (const auto* e = seq.getEventPointer (i); e->message.isNoteOn())
         {
-            mutes += e->message.getNoteNumber() == renders::keys::mute ? 1 : 0;
+            mutes += e->message.getNoteNumber() == keys::palmMuteDown || e->message.getNoteNumber() == keys::palmMuteUp ? 1 : 0;
             if (e->message.getNoteNumber() >= lowestNote && e->message.getNoteNumber() <= highestNote)
             {
                 ++notes;
@@ -1249,64 +1264,55 @@ TEST_CASE ("RENDER LISTS 0.3.0: sustain's exactly as the owner rendered them; pa
     folder.getParentDirectory().deleteRecursively();
 }
 
-TEST_CASE ("ARTICULATIONS 0.3.0: the owner's SPLIT map (C-1 palm mute 1-59 / sustain 60-119, scaled), the FACTORY map", "[guitar][engine]")
+TEST_CASE ("ARTICULATIONS (PR7-N): MAIN and PALM MUTE by the reference bass's keys, velocity as it comes", "[guitar][engine]")
 {
-    // The zones spread over each articulation's whole range (the owner's map has SCALING on).
-    CHECK (playedFor (KeyMap::split, 12, 1).articulation == Articulation::mute);
-    CHECK (playedFor (KeyMap::split, 12, 1).velocity == 1);
-    CHECK (playedFor (KeyMap::split, 12, 59).velocity == 127);
-    CHECK (playedFor (KeyMap::split, 12, 30).velocity == 64);
-    CHECK (playedFor (KeyMap::split, 12, 60).articulation == Articulation::sustain);
-    CHECK (playedFor (KeyMap::split, 12, 60).velocity == 1);
-    CHECK (playedFor (KeyMap::split, 12, 119).velocity == 127);
-    CHECK (playedFor (KeyMap::split, 12, 125).articulation == Articulation::sustain);   // the reference's rake: not rendered
-    CHECK (playedFor (KeyMap::split, 13, 100).powerChord);
-    CHECK_FALSE (playedFor (KeyMap::split, 12, 100).powerChord);
-    CHECK (playedFor (KeyMap::factory, 13, 30).articulation == Articulation::mute);
-    CHECK (playedFor (KeyMap::factory, 13, 30).velocity == 30);
-    CHECK (playedFor (KeyMap::factory, 12, 30).articulation == Articulation::sustain);
-    CHECK (playedFor (KeyMap::factory, 16, 30).powerChord);
-    CHECK (playedFor (KeyMap::factory, 16, 30).articulation == Articulation::mute);
-    CHECK (isArticulationKey (KeyMap::split, 12));
-    CHECK_FALSE (isArticulationKey (KeyMap::split, 15));
-    CHECK (isArticulationKey (KeyMap::factory, 16));
+    // The map's keys (Keys.h).
+    CHECK (keys::latchedBy (keys::mainAlternate).rendered);
+    CHECK (keys::latchedBy (keys::palmMuteDown).articulation == Articulation::mute);
+    CHECK (keys::latchedBy (keys::palmMuteDown).pick == 1);
+    CHECK (keys::latchedBy (keys::mainUp).pick == 2);
+    CHECK_FALSE (keys::latchedBy (keys::pop).rendered);
+    CHECK (keys::isArticulationKey (keys::deadPalmRest));
+    CHECK_FALSE (keys::isArticulationKey (12));                  // (PR7-I's C-1: nothing on the bass)
+    CHECK_FALSE (keys::isArticulationKey (keys::forceKey (2)));
+    CHECK (keys::forcedStringOf (127) == 0);
+    CHECK (keys::forcedStringOf (123) == 4);
+    CHECK (keys::forcedStringOf (122) == -1);
+    CHECK (keys::strokeKey (Articulation::mute, Stroke::up) == 18);
+    CHECK (juce::String (keys::nameOf (keys::slideTrigger)) == "Slide Trigger");
 
-    // SPLIT, as a new instance starts (C-1 latched): velocity 30 a palm mute of the middle degree, 59 the least muted,
-    // 1 the most; 60 the softest sustain, 119 the hardest. The palm mutes are gone in 0.3 s here, the sustains ring.
+    // A new instance starts on MAIN ALTERNATING (sustain). PALM MUTE DOWN: velocity 30 the second degree of muting, 64
+    // the middle, 1 the most, 127 the least; gone in 0.3 s here. MAIN DOWN: velocity picks the dynamic; they ring.
     Player p (true);
-    p.settings.keyMap = KeyMap::split;
-    p.settings.pick = PickMode::down;
+    CHECK (p.guitar.getArticulationKey() == keys::mainAlternate);
     const auto play = [&p] (int velocity)
     {
         p.left.clear();
         p.play (0.5, { { Player::off (45), 0 }, { Player::on (45, velocity), 1 } });
         return std::pair { levelAt (p.left, 110.0, 4800, 4800), rms (p.left, (size_t) (0.4 * sampleRate), (size_t) (0.5 * sampleRate)) };
     };
-    auto [mid, midTail] = play (30);
-    CHECK_THAT (mid, WithinAbs (0.3, 0.01));
-    CHECK (midTail < 1.0e-4);
-    CHECK_THAT (play (59).first, WithinAbs (0.5, 0.01));
+    p.play (0.05, { { Player::on (keys::palmMuteDown, 100), 0 } });
+    auto [second, secondTail] = play (30);
+    CHECK_THAT (second, WithinAbs (0.2, 0.01));
+    CHECK (secondTail < 1.0e-4);
+    CHECK_THAT (play (64).first, WithinAbs (0.3, 0.01));
     CHECK_THAT (play (1).first, WithinAbs (0.1, 0.01));
-    auto [soft, softTail] = play (60);
+    CHECK_THAT (play (127).first, WithinAbs (0.5, 0.01));
+    p.play (0.1, { { Player::off (45), 0 }, { Player::on (45, 30), 1 } });
+    CHECK (p.guitar.getSounding (2).muted);
+    p.play (0.05, { { Player::off (45), 0 }, { Player::on (keys::mainDown, 100), 1 } });
+    auto [soft, softTail] = play (40);
     CHECK_THAT (soft, WithinAbs (0.25, 0.01));
     CHECK (softTail > 0.1);
     CHECK_THAT (play (119).first, WithinAbs (1.0, 0.02));
-    p.play (0.1, { { Player::off (45), 0 }, { Player::on (45, 30), 1 } });
-    CHECK (p.guitar.getSounding (2).muted);
-
-    // FACTORY: C#-1 (13) palm mute, velocity as it comes (30: the second degree); C-1 back to sustain.
-    p.settings.keyMap = KeyMap::factory;
-    p.play (0.05, { { Player::off (45), 0 }, { Player::on (13, 100), 1 } });
-    CHECK_THAT (play (30).first, WithinAbs (0.2, 0.01));
-    p.play (0.05, { { Player::off (45), 0 }, { Player::on (12, 100), 1 } });
-    CHECK_THAT (play (30).first, WithinAbs (0.25, 0.01));
+    CHECK_FALSE (p.guitar.getSounding (2).muted);
 }
 
-TEST_CASE ("PALM MUTE 0.3.0: its eight takes a stroke in turn; power chords as three strings; no palm mutes: sustain stands in", "[guitar][engine]")
+TEST_CASE ("PALM MUTE: its eight takes a stroke in turn; no palm mutes: sustain stands in", "[guitar][engine]")
 {
-    // Alternate picking, palm-muted (SPLIT, velocity 30): down 1, up 1 ... down 8, up 8, then again.
+    // PALM MUTE ALTERNATING: down 1, up 1 ... down 8, up 8, then again.
     Player p (true);
-    p.settings.keyMap = KeyMap::split;
+    p.play (0.01, { { Player::on (keys::palmMuteAlternate, 100), 0 } });
     std::vector<const Take*> order;
     for (int i = 0; i < 32; ++i)
     {
@@ -1317,26 +1323,9 @@ TEST_CASE ("PALM MUTE 0.3.0: its eight takes a stroke in turn; power chords as t
     for (size_t i = 16; i < order.size(); ++i)
         CHECK (order[i] == order[i - 16]);
 
-    // A power chord (C#-1, SPLIT): D2 played as D5, a barre on the low three strings; its note-off stops all three.
-    p.play (1.2, { { Player::off (45), 0 } });   // (a second's rest: the hand goes home)
-    p.play (0.3, { { Player::on (13, 100), 1 }, { Player::on (38, 100), 2 } });
-    for (int s = 0; s < 3; ++s)
-    {
-        CHECK (p.guitar.getSounding (s).fret == 5);
-        CHECK_FALSE (p.guitar.getSounding (s).muted);
-    }
-    p.play (0.3, { { Player::off (38), 0 } });
-    for (int s = 0; s < 3; ++s)
-        CHECK (p.guitar.getSounding (s).fret == -1);
-    // ... and palm-muted (velocity 30).
-    p.play (0.1, { { Player::on (38, 30), 0 } });
-    for (int s = 0; s < 3; ++s)
-        CHECK (p.guitar.getSounding (s).muted);
-
-    // A guitar with no palm mutes yet: velocity 30 plays its softest sustain takes instead (and rings).
+    // A bass with no palm mutes yet: they play its softest sustain takes instead (and ring).
     Player q;
-    q.settings.keyMap = KeyMap::split;
-    q.play (0.5, { { Player::on (45, 30), 0 } });
+    q.play (0.5, { { Player::on (keys::palmMuteDown, 100), 0 }, { Player::on (45, 30), 1 } });
     CHECK_THAT (levelAt (q.left, 110.0, 4800, 4800), WithinAbs (0.25, 0.01));
     CHECK_FALSE (q.guitar.getSounding (2).muted);
     CHECK (q.guitar.getSounding (2).fret == 0);
@@ -1440,14 +1429,13 @@ TEST_CASE ("THE ENGINE 0.4.0: MONO, ECONOMY picking, ATTACK, HAND RESET, CAPO pl
     SECTION ("NOW PLAYING: what the last note did")
     {
         Player p (true);
-        p.settings.keyMap = KeyMap::split;
         CHECK (p.guitar.getNowPlaying().note == -1);
-        p.play (0.1, { { Player::on (12, 100), 0 }, { Player::on (33, 30), 10 } });   // C-1 latched; velocity 30: a palm mute
+        p.play (0.1, { { Player::on (keys::palmMuteDown, 100), 0 }, { Player::on (33, 30), 10 } });   // PALM MUTE DOWN latched
         auto n = p.guitar.getNowPlaying();
         CHECK (n.note == 33);
         CHECK (n.inputVelocity == 30);
         CHECK (n.articulation == Articulation::mute);
-        CHECK (n.velocity == playedFor (KeyMap::split, 12, 30).velocity);
+        CHECK (n.velocity == 30);
         CHECK (n.layer == renders::layerFor (Articulation::mute, n.velocity));
         CHECK (n.layers == 5);
         CHECK (n.roundRobins == 8);
@@ -1455,12 +1443,12 @@ TEST_CASE ("THE ENGINE 0.4.0: MONO, ECONOMY picking, ATTACK, HAND RESET, CAPO pl
         CHECK (n.string == 0);
         CHECK (n.fret == 0);
         const auto count = n.count;
-        p.play (0.1, { { Player::on (45, 90), 0 } });
+        p.play (0.1, { { Player::on (keys::mainUp, 100), 0 }, { Player::on (45, 90), 1 } });
         n = p.guitar.getNowPlaying();
         CHECK (n.count == count + 1);
         CHECK (n.articulation == Articulation::sustain);
         CHECK (n.stroke == Stroke::up);
-        CHECK (n.roundRobins == 2);
+        CHECK (n.roundRobins == 4);
     }
 }
 
@@ -1534,12 +1522,12 @@ TEST_CASE ("0.4.2: a note whose copies were left out plays the takes it has even
         g.prepare (sampleRate);
         Settings s;
         s.library = library.get();
-        s.keyMap = KeyMap::factory;
         s.pick = pick;
         std::vector<const Take*> played;
         std::vector<float> l (blockSize), r (blockSize);
         juce::MidiBuffer ks;
-        ks.addEvent (juce::MidiMessage::noteOn (1, 13, (juce::uint8) 100), 0);   // C#-1: palm mute (factory map)
+        // PR7-N: PALM MUTE DOWN or ALTERNATING (the key sets the picking too)
+        ks.addEvent (juce::MidiMessage::noteOn (1, pick == PickMode::down ? keys::palmMuteDown : keys::palmMuteAlternate, (juce::uint8) 100), 0);
         g.process (l.data(), r.data(), blockSize, ks, 0, s);
         for (int i = 0; i < notes; ++i)
         {
@@ -1591,7 +1579,7 @@ TEST_CASE ("Compare two renders of a riff", "[.][ab-compare]")
         for (const auto* e : *midi.getTrack (t))
         {
             const auto& m = e->message;
-            if (m.isNoteOn() && m.getNoteNumber() >= lowestNote && m.getNoteNumber() < keyswitch::pickUp)
+            if (m.isNoteOn() && m.getNoteNumber() >= lowestNote && m.getNoteNumber() <= highestNote)
                 notes.push_back ({ m.getTimeStamp(), -1.0, m.getNoteNumber(), m.getVelocity() });
             else if (m.isNoteOff())
                 for (auto it = notes.rbegin(); it != notes.rend(); ++it)
@@ -1736,7 +1724,6 @@ TEST_CASE ("0.4.3: a note's pick lands 15 ms after its note-on (takes keep 30 ms
     g.prepare (rate);
     Settings s;
     s.library = library.get();
-    s.keyMap = KeyMap::factory;
     std::vector<float> l (4800, 0.0f), r (4800, 0.0f);
     juce::MidiBuffer midi;
     const auto noteAt = 1000;
@@ -1753,82 +1740,4 @@ TEST_CASE ("0.4.3: a note's pick lands 15 ms after its note-on (takes keep 30 ms
     // nothing loud before it: the lead-in faded in, no click
     for (int i = noteAt; i < noteAt + (int) (takeStartSeconds * rate) - 2; ++i)
         CHECK (std::abs (l[(size_t) i]) < 0.01f);
-}
-
-// PARAGON_AB_SUITE_MIDI=<tools/ab-suite's MIDI file> ./GuitarCoreTests "[ab-suite]": plays the A/B suite through the
-// engine (the made-up tone guitar, the FACTORY key map as the suite asks) and writes, for every note played, what PR7-I
-// did with it (PARAGON_AB_SUITE_CSV: time, note, velocity, string, fret, articulation, stroke, power chord), and the audio
-// (PARAGON_AB_SUITE_WAV). ab_suite.py's "check" compares the CSV with what the suite meant.
-TEST_CASE ("Play the A/B suite through the engine", "[.][ab-suite]")
-{
-    const juce::File midiFile (juce::SystemStats::getEnvironmentVariable ("PARAGON_AB_SUITE_MIDI", {}));
-    REQUIRE (midiFile.existsAsFile());
-    juce::MidiFile mf;
-    {
-        juce::FileInputStream in (midiFile);
-        REQUIRE (mf.readFrom (in));
-    }
-    mf.convertTimestampTicksToSeconds();
-    juce::MidiMessageSequence seq;
-    for (int t = 0; t < mf.getNumTracks(); ++t)
-        seq.addSequence (*mf.getTrack (t), 0.0);
-    seq.sort();
-
-    Player p (true);
-    juce::StringArray csv { "seconds,note,velocity,string,fret,articulation,stroke,power" };
-    double end = 0.0;
-    for (int i = 0; i < seq.getNumEvents(); ++i)
-        end = std::max (end, seq.getEventPointer (i)->message.getTimeStamp());
-    const auto total = (int) ((end + 1.0) * sampleRate);
-    int done = 0, next = 0;
-    while (done < total)
-    {
-        // Up to the next event (or a block), so a note-on's choice can be read just after it.
-        auto n = std::min (blockSize, total - done);
-        juce::MidiBuffer midi;
-        std::vector<juce::MidiMessage> playedNow;
-        while (next < seq.getNumEvents())
-        {
-            const auto& m = seq.getEventPointer (next)->message;
-            const auto at = (int) std::lround (m.getTimeStamp() * sampleRate);
-            if (at >= done + n)
-                break;
-            midi.addEvent (m, std::max (0, at - done));
-            if (m.isNoteOn() && ((m.getNoteNumber() >= lowestNote && m.getNoteNumber() <= highestNote) || m.getNoteNumber() == keyswitch::fretNoise))
-            {
-                playedNow.push_back (m);
-                n = std::max (1, at - done + 1);   // stop just after it
-                ++next;
-                break;
-            }
-            ++next;
-        }
-        std::vector<float> l ((size_t) n, 0.0f), r ((size_t) n, 0.0f);
-        p.guitar.process (l.data(), r.data(), n, midi, 0, p.settings);
-        p.left.insert (p.left.end(), l.begin(), l.end());
-        for (const auto& m : playedNow)
-        {
-            const auto now = p.guitar.getNowPlaying();
-            const auto fret = m.getNoteNumber() == keyswitch::fretNoise;
-            csv.add (juce::String (m.getTimeStamp(), 4) + "," + juce::String (m.getNoteNumber()) + "," + juce::String (m.getVelocity()) + ","
-                     + (fret ? juce::String ("-1,0,fret noise,-,0")
-                             : juce::String (now.string) + "," + juce::String (now.fret) + ","
-                                   + (now.articulation == Articulation::mute ? "mute" : "sustain") + ","
-                                   + (now.stroke == Stroke::down ? "down" : "up") + "," + (now.powerChord ? "1" : "0")));
-        }
-        done += n;
-    }
-    if (const auto out = juce::SystemStats::getEnvironmentVariable ("PARAGON_AB_SUITE_CSV", {}); out.isNotEmpty())
-        juce::File (out).replaceWithText (csv.joinIntoString ("\n") + "\n");
-    if (const auto out = juce::SystemStats::getEnvironmentVariable ("PARAGON_AB_SUITE_WAV", {}); out.isNotEmpty())
-    {
-        juce::File (out).deleteFile();
-        juce::AudioBuffer<float> buffer (1, (int) p.left.size());
-        buffer.copyFrom (0, 0, p.left.data(), (int) p.left.size());
-        juce::WavAudioFormat wav;
-        std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (juce::File (out)), sampleRate, 1, 24, {}, 0));
-        REQUIRE (w != nullptr);
-        w->writeFromAudioSampleBuffer (buffer, 0, buffer.getNumSamples());
-    }
-    CHECK (csv.size() > 400);
 }

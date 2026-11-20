@@ -4,7 +4,7 @@
 
 // THE NOISE LISTS (PR7-I 0.6.0): what PR7-I needs from the reference to play its noises, as MIDI files to render
 // through it, the note lists' way (renders::), so the import knows where each noise lands. Designed from the owner's
-// noise check (November 2026: "PR7-I Noise Check.mid" rendered twice, normally and with the notes' Volume at minimum):
+// noise check (November 2026: "PR7-N Noise Check.mid" rendered twice, normally and with the notes' Volume at minimum):
 //   - every note-off of a sustained note plays a PITCHED RELEASE at the note's pitch (the low A's at ~55 Hz, the D
 //     string's 7th fret at ~217 Hz): instantly, ~25 dB under the note, gone in ~0.3 s; nearly one recording, 16 identical
 //     notes giving near-copies (similarity 0.93-0.98); velocity changes it ~3 dB at most; notes held 2 s got none (held
@@ -27,6 +27,12 @@
 //     so each comes at least twice).
 // Every note a down stroke (C#7 before it, as the note lists); each file starts with legato off (D#0) and, but for
 // fret noise, every hit gets its force-string key and articulation key 0.25 s before it.
+//
+// PR7-N 0.1.0 (the bass): the pitched releases (one list per string) and the unpitched noises, the same layouts, played
+// with the reference bass's keys (Keys.h: MAIN DOWN before each hit, the string's force key held over it). The bass has
+// no power chords and its map shows no fret-noise key, so those two lists aren't on the RENDERS page (their code stays,
+// shared with PR7-I). Whether the reference bass plays release noises, and whether its notes can be silenced alone the
+// way PR7-I's sister reference's can, isn't known (no manual): the import refuses a render with the notes in it.
 namespace guitar::noises
 {
     enum class List { pitchedRelease, powerChordRelease, unpitched, fretNoise };
@@ -57,14 +63,13 @@ namespace guitar::noises
     std::vector<Hit> hits (List, int string = 0);    // (string: the pitched releases' list)
     double lengthSeconds (List, int string = 0);
     juce::MidiFile toMidi (List, int string = 0);
-    juce::String fileName (List, int string = 0);    // "PR7-I Release - String 7 (low A)", "PR7-I Fret Noise"...
+    juce::String fileName (List, int string = 0);    // "PR7-N Release - String 5 (low A)", "PR7-N Fret Noise"...
 
-    // The RENDERS page's NOISES rows: 0-6 each string's pitched releases (the low A first), 7 power-chord releases,
-    // 8 unpitched noises, 9 fret noise.
-    inline constexpr int numRows = numStrings + 3;
+    // The RENDERS page's NOISES rows (PR7-N): 0-4 each string's pitched releases (the low A first), 5 unpitched noises.
+    inline constexpr int numRows = numStrings + 1;
     struct RowList { List list = List::pitchedRelease; int string = 0; };
     RowList rowList (int row) noexcept;
-    juce::String rowName (int row);                  // "String 7 (low A)", "Power chords", "Unpitched", "Fret noise"
+    juce::String rowName (int row);                  // "STRING 5 (LOW A)" ... "Unpitched"
 
     // Where an imported noise goes in a guitar's folder (0.6.0): "Release/s0_f05_r0.wav" (pitched release: string,
     // fret, which of its different recordings), "PowerRelease/s1_f03_r0.wav" (the root's string and fret),

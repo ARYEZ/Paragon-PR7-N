@@ -225,12 +225,19 @@ namespace guitar::noises
             const auto from = toSample (preSeconds + 0.01);
             for (const auto& cut : cuts)
             {
-                const auto expected = frequencyOf (cut.hit->note);
                 const auto n = (int) cut.samples.size() - from;
                 if (n <= 0)
                     continue;
-                if (const auto hz = renders::pitchOf (cut.samples.data() + from, n, rate, expected); hz > 0.0)
-                    (std::abs (1200.0 * std::log2 (hz / expected)) <= 150.0 ? match : wrong) += 1;
+                // PR7-N: at the bass's sounding pitch (an octave under the key) or at the key's own.
+                auto right = false, measured = false;
+                for (const auto expected : { soundingFrequency (cut.hit->note), frequencyOf (cut.hit->note) })
+                    if (const auto hz = renders::pitchOf (cut.samples.data() + from, n, rate, expected); hz > 0.0)
+                    {
+                        measured = true;
+                        right = right || std::abs (1200.0 * std::log2 (hz / expected)) <= 150.0;
+                    }
+                if (measured)
+                    (right ? match : wrong) += 1;
             }
             if (wrong > (int) cuts.size() / 2 && match < (int) cuts.size() / 5)
             {

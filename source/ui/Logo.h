@@ -26,7 +26,7 @@ namespace Logo
     juce::Rectangle<float> drawMark (juce::Graphics&, juce::Rectangle<float> area, juce::Justification justification, const Style&);
 
     // The PR7-I icon (PR7-D 0.57.0's, in the style of PR7-S's "7S" icon): a big slanted "7I" (the 7
-    // `sevenTop` above its first speed cut, `sevenLow` below, the I `letters`), a line under it, the "PR7-I" mark
+    // `sevenTop` above its first speed cut, `sevenLow` below, the I `letters`), a line under it, the "PR7-N" mark
     // smaller under that (its 7 `accent`), all in a rounded frame (`accent`). Drawn in the square `area`.
     struct IconStyle
     {

@@ -89,6 +89,7 @@ namespace guitar::renders
                               const juce::File& guitarFolder, std::atomic<float>* progress, const std::atomic<bool>* cancel)
     {
         ImportReport report;
+        juce::StringArray outOfTuneAtKey;   // PR7-N: the same check at the key's own pitch
         const auto list = takes (articulation, string);
         const auto toSample = [sampleRate] (double seconds) { return (int) std::lround (seconds * sampleRate); };
 
@@ -150,27 +151,35 @@ namespace guitar::renders
             for (int k = 0; k < fadeOut; ++k)
                 samples[(size_t) (length - 1 - k)] *= (float) k / (float) fadeOut;
 
-            const auto expected = frequencyOf (take.note());
+            // PR7-N: each take checked an octave under its key (where a bass sounds: Tuning.h) and at its key, the file
+            // judged by whichever octave fits more of its takes.
             const auto from = toSample (prerollSeconds + 0.12);
-            if (const auto hz = pitchOf (samples.data() + from, length - from, sampleRate, expected); hz > 0.0)
+            for (int octave = 0; octave < 2; ++octave)
             {
-                const auto cents = 1200.0 * std::log2 (hz / expected);
-                if (std::abs (cents) > centsTolerance)
-                    report.outOfTune.add ("fret " + juce::String (take.fret) + ", " + layerName (take.layer) + ", "
-                                          + (take.stroke == Stroke::down ? "down" : "up") + ": "
-                                          + (cents > 0 ? "+" : "") + juce::String (juce::roundToInt (cents)) + " cents");
+                const auto expected = octave == 0 ? soundingFrequency (take.note()) : frequencyOf (take.note());
+                auto& out = octave == 0 ? report.outOfTune : outOfTuneAtKey;
+                if (const auto hz = pitchOf (samples.data() + from, length - from, sampleRate, expected); hz > 0.0)
+                {
+                    const auto cents = 1200.0 * std::log2 (hz / expected);
+                    if (std::abs (cents) > centsTolerance)
+                        out.add ("fret " + juce::String (take.fret) + ", " + layerName (take.layer) + ", "
+                                 + (take.stroke == Stroke::down ? "down" : "up") + ": "
+                                 + (cents > 0 ? "+" : "") + juce::String (juce::roundToInt (cents)) + " cents");
+                }
+                else
+                    out.add ("fret " + juce::String (take.fret) + ", " + layerName (take.layer) + ": no clear pitch");
             }
-            else
-                report.outOfTune.add ("fret " + juce::String (take.fret) + ", " + layerName (take.layer) + ": no clear pitch");
             cuts.push_back ({ &take, std::move (samples) });
             if (progress != nullptr)
                 *progress = 0.8f * (float) (i + 1) / (float) list.size();
         }
+        if (outOfTuneAtKey.size() < report.outOfTune.size())
+            report.outOfTune = outOfTuneAtKey;
         if (cuts.empty() || (double) report.outOfTune.size() > 0.3 * (double) cuts.size())
         {
             report.error = juce::String (report.outOfTune.size()) + " of " + juce::String ((int) cuts.size())
                          + " notes aren't the pitch the list asked for: is this the render of " + fileName (articulation, string)
-                         + ", with the force-string keyswitches and drop A tuning as they come?";
+                         + ", with the force-string keys and drop A tuning (A0 E1 A1 D2 G2) as they come?";
             return report;
         }
 

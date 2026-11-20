@@ -8,33 +8,6 @@ namespace guitar
         return renders::layerFor (Articulation::sustain, velocity);
     }
 
-    bool isArticulationKey (KeyMap map, int note) noexcept
-    {
-        using namespace keyswitch;
-        return map == KeyMap::split ? (note == c1 || note == cSharp1)
-                                    : (note == c1 || note == cSharp1 || note == dSharp1 || note == e1);
-    }
-
-    Played playedFor (KeyMap map, int key, int velocity) noexcept
-    {
-        using namespace keyswitch;
-        velocity = juce::jlimit (1, 127, velocity);
-        // A zone [lo, hi] spread over 1-127 (the owner's SCALING).
-        const auto scaled = [velocity] (int lo, int hi) { return juce::jlimit (1, 127, 1 + juce::roundToInt ((velocity - lo) * 126.0 / (double) (hi - lo))); };
-        if (map == KeyMap::split)
-        {
-            const auto power = key == cSharp1;
-            if (velocity <= 59)
-                return { Articulation::mute, scaled (1, 59), power };
-            if (velocity <= 119)
-                return { Articulation::sustain, scaled (60, 119), power };
-            return { Articulation::sustain, 127, power };   // the reference's rake / pinch: not rendered
-        }
-        if (key == cSharp1 || key == e1)
-            return { Articulation::mute, velocity, key == e1 };
-        return { Articulation::sustain, juce::jmin (119, velocity), key == dSharp1 };
-    }
-
     void Guitar::prepare (double sampleRate)
     {
         rate = sampleRate > 0.0 ? sampleRate : 48000.0;
@@ -119,50 +92,44 @@ namespace guitar
         {
             const auto n = m.getNoteNumber();
             const auto velocity = (int) m.getVelocity();
-            if (n < lowestNote || n == keyswitch::pickUp || n == keyswitch::pickDown || n == keyswitch::pickAlternate)
+            if (n < lowestNote || n > highestNote)
             {
-                if (n == keyswitch::fretNoise)
+                // The reference bass's keys (Keys.h). A force-string key forces while held.
+                if (const auto forced = keys::forcedStringOf (n); forced >= 0)
+                    ksForce = forced;
+                else if (keys::isArticulationKey (n))
                 {
-                    // FRET NOISE: the next recording in turn, by velocity.
-                    if (library != nullptr && s.fretNoise > 0.0f)
-                        if (const auto* take = library->fretNoise (fretTurn))
-                        {
-                            ++fretTurn;
-                            playNoise (take, s.fretNoise * (float) std::pow (velocity / 127.0, 0.85), 1.0);
-                        }
-                    return;
+                    latchedKey = n;
+                    if (const auto l = keys::latchedBy (n); l.rendered)
+                    {
+                        articulationKey = n;
+                        ksPick = l.pick == 1 ? (int) PickMode::down : l.pick == 2 ? (int) PickMode::up : (int) PickMode::alternate;
+                    }
                 }
-                if (n >= keyswitch::forceLowA && n < keyswitch::forceLowA + numStrings) ksForce = n - keyswitch::forceLowA;
-                else if (n == keyswitch::forceOff) ksForce = -1;
-                else if (n == keyswitch::setHand) ksHand = juce::jlimit (1, numFrets - 3, velocity);
-                else if (n == keyswitch::handAuto) ksHand = 0;
-                else if (n == keyswitch::pickUp) ksPick = (int) PickMode::up;
-                else if (n == keyswitch::pickDown) ksPick = (int) PickMode::down;
-                else if (n == keyswitch::pickAlternate) ksPick = (int) PickMode::alternate;
-                else if (isArticulationKey (s.keyMap, n)) articulationKey = n;
                 return;
             }
             const auto note = n + s.transpose;
-            const auto played = playedFor (s.keyMap, articulationKey, velocity);
-            // A power chord: the root, the fifth and the octave (as far as the guitar goes), fretted together.
-            for (const auto interval : { 0, 7, 12 })
+            if (note >= lowestNote && note <= highestNote && chord.count < maxChord)
             {
-                if (interval > 0 && ! played.powerChord)
-                    break;
-                const auto each = note + interval;
-                if (each >= lowestNote && each <= highestNote && chord.count < maxChord)
-                {
-                    chord.notes[(size_t) chord.count] = each;
-                    chord.velocities[(size_t) chord.count] = played.velocity;
-                    chord.sources[(size_t) chord.count] = note;
-                    chord.inputVelocities[(size_t) chord.count] = velocity;
-                    chord.power[(size_t) chord.count] = played.powerChord;
-                    chord.articulations[(size_t) chord.count++] = played.articulation;
-                }
+                chord.notes[(size_t) chord.count] = note;
+                chord.velocities[(size_t) chord.count] = juce::jlimit (1, 127, velocity);
+                chord.sources[(size_t) chord.count] = note;
+                chord.inputVelocities[(size_t) chord.count] = velocity;
+                chord.power[(size_t) chord.count] = false;   // (the bass has no power chords)
+                chord.articulations[(size_t) chord.count++] = keys::latchedBy (articulationKey).articulation;
             }
         }
         else if (m.isNoteOff())
         {
+            // A force-string key let go: the string isn't forced any more (back to the page's setting).
+            if (const auto forced = keys::forcedStringOf (m.getNoteNumber()); forced >= 0)
+            {
+                if (ksForce == forced)
+                    ksForce = -2;
+                return;
+            }
+            if (m.getNoteNumber() < lowestNote || m.getNoteNumber() > highestNote)
+                return;
             const auto note = m.getNoteNumber() + s.transpose;
             releaseNoises (note, s);
             for (auto& v : voices)

@@ -2,6 +2,7 @@
 
 #include "guitar/Fretting.h"
 #include "guitar/GuitarLibrary.h"
+#include "guitar/Keys.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
@@ -22,20 +23,14 @@
 //     judged by ear.
 //   - VELOCITY picks the dynamic (the render list's three: below 65 soft, below 102 medium, then hard), and within it
 //     VEL > VOL scales the level (0: the take as recorded; 1: fully by velocity).
-//   - KEYSWITCHES, below the guitar's lowest note (A1) and above its highest: the reference's defaults, so MIDI parts
-//     written for it play the same: C-2..F#-2 (notes 0-6) force string low A..high E, G-2 (7) force string off; A#-2
-//     (10) hand position = its velocity, B-2 (11) hand AUTO; C7 / C#7 / D7 (108-110) picking up / down / alternate. A
-//     keyswitch overrides the page's setting until that setting is changed.
-//   - ARTICULATIONS (0.3.0), latching keyswitches, by the KEY MAP:
-//       SPLIT (the owner's own map, the default): C-1 (12) palm mute at velocities 1-59 and sustain at 60-119 (120-127:
-//       the reference's rake and pinch, not rendered: sustain at its hardest); C#-1 (13) the same for power chords. Each
-//       zone SCALED over its articulation's whole velocity range (the owner's map has SCALING on), so 1-59 reaches all
-//       five degrees of muting and 60-119 all three sustain dynamics.
-//       FACTORY (the reference's own): C-1 sustain, C#-1 palm mute, D#-1 (15) power-chord sustain, E-1 (16) power-chord
-//       mute; velocity as it comes.
-//     PALM MUTE plays the guitar's Mute takes (velocity choosing the degree of muting); a guitar with none yet plays its
-//     softest sustain takes instead. POWER CHORDS (not rendered yet) play the root, the fifth and the octave as three
-//     notes, fretted together (our stand-in, as a player would: drop A's D5 a barre).
+//   - KEYSWITCHES (PR7-N 0.1.0): the reference bass's map (Keys.h), below the low A and above the G's 24th fret, so
+//     MIDI parts written for it play the same: MAIN ALTERNATING / DOWN / UP (C-2, D-2, C#-2) latch sustain with that
+//     picking, PALM MUTE ALTERNATING / DOWN / UP (F-1, G-1, F#-1) palm mute with it; the map's other articulations
+//     aren't rendered yet: latched, they leave the last rendered one playing (the screen names the key latched). The
+//     force-string keys (127 the low A .. 123 the G) force their string while held. Velocity as it comes (a palm mute's
+//     velocity: how muted, as the render list asks). A keyswitch overrides the page's setting until that setting is
+//     changed. (PR7-I's KEY MAP, power chords, hand keys and F#0 fret noise aren't the bass's: gone from the keys.)
+//     PALM MUTE plays the bass's Mute takes; a bass with none yet plays its softest sustain takes instead.
 //   - THE HAND (AUTO): follows the notes; back to the bottom of the neck after HAND RESET (a second) with nothing held.
 //   - 0.4.0: CAPO and HAND SPAN (Fretting.h); ECONOMY picking (alternate, but a note crossing to the next string in the
 //     way the pick is already moving takes the same stroke again: a down stroke going on to a higher string stays down,
@@ -56,7 +51,6 @@
 namespace guitar
 {
     enum class PickMode { alternate, down, up, economy };   // append only
-    enum class KeyMap { split, factory };           // append only
 
     struct Settings
     {
@@ -67,7 +61,6 @@ namespace guitar
         float velocityToVolume = 0.5f;
         float releaseSeconds = 0.08f;
         float variation = 0.0f;        // 0 to 1
-        KeyMap keyMap = KeyMap::split;
         int transpose = 0;
         int capo = 0;                  // 0.4.0: 0 none, else its fret
         int handSpan = 0;              // 0.4.0: 0 the mode's own
@@ -82,21 +75,7 @@ namespace guitar
         bool waitForDisk = false;      // bouncing: wait for the disk rather than play silence
     };
 
-    namespace keyswitch
-    {
-        inline constexpr int forceLowA = 0, forceOff = 7, setHand = 10, handAuto = 11;
-        inline constexpr int c1 = 12, cSharp1 = 13, dSharp1 = 15, e1 = 16;   // the articulation keys
-        inline constexpr int pickUp = 108, pickDown = 109, pickAlternate = 110;
-        inline constexpr int fretNoise = 30;   // 0.6.0: F#0
-    }
-
     int layerFor (int velocity) noexcept;
-
-    // What a note-on plays under a key map, with the articulation keyswitch `key` latched: the articulation, its velocity
-    // (scaled, in the SPLIT map, from the zone to the articulation's whole range) and whether it's a power chord.
-    struct Played { Articulation articulation = Articulation::sustain; int velocity = 1; bool powerChord = false; };
-    Played playedFor (KeyMap, int key, int velocity) noexcept;
-    bool isArticulationKey (KeyMap, int note) noexcept;
 
     // 0.4.3: where in each take a note starts. Imports cut each take from 30 ms before its pick (RenderImport's
     // prerollSeconds), and until 0.4.2 notes played from the very start, so every pick landed 30 ms after its note-on.
@@ -123,7 +102,8 @@ namespace guitar
         {
             return { soundingFret[(size_t) string].load(), soundingLevel[(size_t) string].load(), soundingMuted[(size_t) string].load() };
         }
-        int getArticulationKey() const noexcept { return articulationKey; }
+        int getArticulationKey() const noexcept { return articulationKey; }   // the rendered articulation's key latched
+        int getLatchedKey() const noexcept { return latchedKey; }             // the last articulation key, rendered or not
         int getHand() const noexcept { return shownHand.load(); }
         int getActiveVoices() const noexcept { return activeVoices.load(); }
         int getActiveNoises() const noexcept { return activeNoises.load(); }   // 0.6.0: noise voices sounding
@@ -144,6 +124,7 @@ namespace guitar
         NowPlaying getNowPlaying() const noexcept;
         Position lastPosition() const noexcept { return last; }  // tests: the last note's string and fret
         Stroke lastStroke() const noexcept { return lastStrokePlayed; }
+        Articulation lastArticulation() const noexcept { return (Articulation) nowPlaying[10].load(); }   // (tests; PR7-N)
         const Take* lastTake() const noexcept { return lastTakePlayed; }
 
     private:
@@ -185,7 +166,8 @@ namespace guitar
         double idleSamples = 0.0;
         Stroke nextStroke = Stroke::down;
         std::array<std::array<int, 2>, numArticulations> nextRoundRobin {};   // by articulation and stroke
-        int articulationKey = keyswitch::c1;                                  // the articulation keyswitch latched
+        int articulationKey = keys::mainAlternate;                             // the rendered articulation's key latched
+        int latchedKey = keys::mainAlternate;                                  // the last articulation key (any)
         std::array<std::array<const Take*, 2>, numStrings> lastByStroke {};   // the take each stroke played last on each string
         juce::Random random { 0x7072 };
         int ksForce = -2;           // -2: no keyswitch (the setting), -1: off, else a string
