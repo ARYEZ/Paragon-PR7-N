@@ -448,22 +448,29 @@ else:
 def humbucker(name, X):
     x, _ = B(X, 0)
     w, h = (0.019, 0.074) if BASS else (0.036, 0.080)   # (the bass's soapbars narrow: three of them 28 mm apart)
-    box(name, (w, h, 0.007), (x, 0, TOP + 0.0025), PICKUP, bevel=0.0025, segs=4)
+    # PR7-N: on the fanned bass each pickup is slanted along the fan as the real bass's are: it sits at the same
+    # fraction k of every string's length, so its line is x (y) = bridge (y) + k scale (y) (straight across on a guitar)
+    k = (x - (fx(0, 0.0) - scale_at(0.0))) / scale_at(0.0)
+    along = lambda y: fx(0, y) - scale_at(y) + k * scale_at(y)
+    angle = math.atan2(along(h / 2) - along(-h / 2), h)
+    box(name, (w, h / math.cos(angle), 0.007), (x, 0, TOP + 0.0025), PICKUP, bevel=0.0025, segs=4, rot=(0, 0, -angle))
     for s in range(NSTR):
         y = string_y(s, x)
         for dx in ((0.0,) if BASS else (-0.0085, 0.0085)):
-            cylinder(name + " pole", 0.0016, 0.002, (x + dx, y, TOP + 0.0062), POLE, verts=16)
-    # a glowing ring round the pickup (the kit's rim light)
+            cylinder(name + " pole", 0.0016, 0.002, (along(y) + dx, y, TOP + 0.0062), POLE, verts=16)
+    # a glowing ring round the pickup (the kit's rim light), turned with it
     r = 0.0035
     ring = []
-    for k in range(64):
-        a = 2 * math.pi * k / 64
-        cxp, cyp = (w / 2 - r + 0.0015) * (1 if math.cos(a) >= 0 else -1), (h / 2 - r + 0.0015) * (1 if math.sin(a) >= 0 else -1)
-        ring.append((x + cxp + r * math.cos(a), cyp + r * math.sin(a), TOP + 0.0006))
+    ca, sa = math.cos(-angle), math.sin(-angle)
+    for kk in range(64):
+        a = 2 * math.pi * kk / 64
+        cxp, cyp = (w / 2 - r + 0.0015) * (1 if math.cos(a) >= 0 else -1), (h / 2 / math.cos(angle) - r + 0.0015) * (1 if math.sin(a) >= 0 else -1)
+        px_, py_ = cxp + r * math.cos(a), cyp + r * math.sin(a)
+        ring.append((x + px_ * ca - py_ * sa, px_ * sa + py_ * ca, TOP + 0.0006))
     tube(name + " ring", ring, 0.0006, NEON, closed=True)
 if BASS:
     # three bass pickups close together nearer the neck (as the reference body's), soapbars with a pole per string
-    for name, X in (("neck pickup", 128), ("middle pickup", 100), ("bridge pickup", 72)):
+    for name, X in (("neck pickup", 122), ("middle pickup", 95), ("bridge pickup", 68)):
         humbucker(name, X)
 else:
     humbucker("neck pickup", 126)
