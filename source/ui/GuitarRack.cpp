@@ -237,7 +237,7 @@ void GuitarRack::paint (juce::Graphics& g)
     PedalBody::paintUnit (g, chassis, face(), [this] (juce::Graphics& gg) { gg.drawImage (satin, getLocalBounds().toFloat()); }, unitShape);
 
     // The badge, as on PR7-G's unit: PARAGON over the PR7-I mark, what it is printed in red.
-    PedalBody::paintBadge (g, badgeColumn().withHeight (88.0f).translated (2.0f, 2.0f), "GUITAR INSTRUMENT");
+    PedalBody::paintBadge (g, badgeColumn().withHeight (88.0f).translated (2.0f, 2.0f), "BASS INSTRUMENT");
     {
         const auto a = pageKeyCell (0).toFloat(), b = pageKeyCell (1).toFloat();
         const auto c = pageKeyCell (2).toFloat();
@@ -259,13 +259,11 @@ void GuitarRack::paint (juce::Graphics& g)
 
     paintScreen (g);
 
-    // The keys' names stamped under them; KEY MAP printed over the first two.
-    for (int i = 0; i < 3; ++i)
+    // The key's name stamped under it (PR7-N: VARIATION alone; PR7-I's SPLIT / FACTORY KEY MAP keys aren't the bass's).
     {
-        const auto key = keyCell (i).toFloat();
-        stamped (g, i == 0 ? "SPLIT" : i == 1 ? "FACTORY" : "VARIATION", key.translated (0.0f, key.getHeight() + 2.0f).withHeight (12.0f).expanded (20.0f, 0.0f), 8.0f);
+        const auto key = keyCell (2).toFloat();
+        stamped (g, "VARIATION", key.translated (0.0f, key.getHeight() + 2.0f).withHeight (12.0f).expanded (20.0f, 0.0f), 8.0f);
     }
-    bracket (g, keyCell (0).toFloat(), keyCell (1).toFloat(), "KEY MAP");
 
     // The page's name, over it.
     auto title = pageArea().withY (content().getY()).withHeight (titleHeight);

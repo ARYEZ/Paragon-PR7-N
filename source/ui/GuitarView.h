@@ -35,7 +35,9 @@ public:
 
     // Where things are, in the view's pixels (tests).
     juce::Point<float> noteCentre (int string, int fret) const;
-    float fretX (int fret) const;                 // the fret wire (0: the nut)
+    float fretX (int fret) const;                 // the fret wire (0: the nut), along the neck's middle
+    float fretXOn (int string, int fret) const;   // PR7-N: the fret wire where it crosses that string (fanned frets)
+    juce::Line<float> fretLine (int fret, float outside = 0.0f) const;   // the wire across the board, edge to edge
     int fretAt (float x) const;                   // the fret space under x (0: between the 1st fret and the nut)
     int shownFret (int string) const noexcept { return frets[(size_t) string]; }
     bool shownMuted (int string) const noexcept { return muted[(size_t) string]; }

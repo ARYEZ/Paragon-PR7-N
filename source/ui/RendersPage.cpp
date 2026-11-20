@@ -154,7 +154,7 @@ void RendersPage::showArticulation (guitar::Articulation a)
 
 void RendersPage::chooseFolder()
 {
-    chooser = std::make_unique<juce::FileChooser> ("The guitar's folder of takes", processor.getGuitarFolder());
+    chooser = std::make_unique<juce::FileChooser> ("The bass's folder of takes", processor.getGuitarFolder());
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
                           [this] (const juce::FileChooser& c)
                           {

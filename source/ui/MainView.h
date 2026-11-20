@@ -84,7 +84,7 @@ private:
 
     ParagonX1AudioProcessor& audioProcessor;
 
-    IconButton guitarTab { "The guitar: how it plays, the notes as they're played", Icons::Type::guitar, "GUITAR" },
+    IconButton guitarTab { "The bass: how it plays, the notes as they're played", Icons::Type::guitar, "BASS" },
                rendersTab { "The guitar's folder of takes, the render lists, importing renders", Icons::Type::speaker, "RENDERS" },
                presetsTab { "Browse, save and organise presets", Icons::Type::presets, "PRESETS" },
                settingsTab { "The presets folder, MIDI links, note names and more", Icons::Type::settings, "SETTINGS" };

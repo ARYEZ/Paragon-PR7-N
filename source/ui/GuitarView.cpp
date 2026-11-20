@@ -18,6 +18,10 @@ namespace
     {
         std::array<juce::Point<float>, guitar::numStrings> bridge {}, nut {};
         std::array<float, guitar::numFrets + 1> frets {};
+        // PR7-N: the fanned frets: where each fret crosses each string, and each fret's ends at the board's two edges
+        // (a guitar's picture without them: the frets straight across, as PR7-I's).
+        std::array<std::array<float, guitar::numFrets + 1>, guitar::numStrings> fretOn {};
+        std::array<std::pair<juce::Point<float>, juce::Point<float>>, guitar::numFrets + 1> fretEnds {};
         juce::Point<float> boardTop[2], boardBottom[2];
     };
 
@@ -35,6 +39,13 @@ namespace
             }
             for (int f = 0; f <= guitar::numFrets; ++f)
                 result.frets[(size_t) f] = (float) json["frets"][f][0];
+            for (int s = 0; s < guitar::numStrings; ++s)
+                for (int f = 0; f <= guitar::numFrets; ++f)
+                    result.fretOn[(size_t) s][(size_t) f] = json["fretsByString"].isArray() ? (float) json["fretsByString"][s][f] : result.frets[(size_t) f];
+            for (int f = 0; f <= guitar::numFrets; ++f)
+                result.fretEnds[(size_t) f] = json["fretLines"].isArray()
+                    ? std::pair { point (json["fretLines"][f][0]), point (json["fretLines"][f][1]) }
+                    : std::pair { juce::Point<float> (result.frets[(size_t) f], 0.0f), juce::Point<float> (result.frets[(size_t) f], 0.0f) };
             for (int i = 0; i < 2; ++i)
             {
                 result.boardTop[i] = point (json["boardTop"][i]);
@@ -353,6 +364,25 @@ float GuitarView::fretX (int fret) const
     return geometry().frets[(size_t) juce::jlimit (0, guitar::numFrets, fret)];
 }
 
+float GuitarView::fretXOn (int string, int fret) const
+{
+    return geometry().fretOn[(size_t) juce::jlimit (0, guitar::numStrings - 1, string)][(size_t) juce::jlimit (0, guitar::numFrets, fret)];
+}
+
+juce::Line<float> GuitarView::fretLine (int fret, float outside) const
+{
+    // A fret across the board, from the upper edge to the lower (slanted on the fanned bass), `outside` px past each.
+    const auto& [a, b] = geometry().fretEnds[(size_t) juce::jlimit (0, guitar::numFrets, fret)];
+    if (a == b)   // (no fret ends: straight across)
+    {
+        const auto x = fretX (fret);
+        return { x, boardEdge (true, x) - outside, x, boardEdge (false, x) + outside };
+    }
+    const auto upper = a.translated (0.0f, (float) -top), lower = b.translated (0.0f, (float) -top);
+    const auto along = (lower - upper) / upper.getDistanceFrom (lower);
+    return { upper - along * outside, lower + along * outside };
+}
+
 int GuitarView::fretAt (float x) const
 {
     if (x >= fretX (1))
@@ -378,7 +408,10 @@ float GuitarView::boardEdge (bool upper, float x) const
 
 juce::Point<float> GuitarView::noteCentre (int string, int fret) const
 {
-    const auto x = fret <= 0 ? fretX (0) + 14.0f : (fretX (fret - 1) + fretX (fret)) * 0.5f;
+    // (PR7-N: between the fret wires where they cross this string)
+    // (an open string just inside the nut, PR7-N: past it, where PR7-I drew it, the fanned nut put the low strings' dots
+    // over their names and half off the window)
+    const auto x = fret <= 0 ? fretXOn (string, 0) - 10.0f : (fretXOn (string, fret - 1) + fretXOn (string, fret)) * 0.5f;
     return { x, stringY (string, x) };
 }
 
@@ -496,17 +529,22 @@ void GuitarView::paintNeck (juce::Graphics& g)
     const auto first = juce::jmax (capo + 1, hand), last = juce::jmin (guitar::numFrets, hand + span - 1);
     const auto xa = first <= capo + 1 ? fretX (capo) : fretX (first - 1), xb = fretX (last);   // (the nut side is on the right)
     {
+        // (between the slanted frets on the fanned bass)
+        const auto fa = first <= capo + 1 ? capo : first - 1;
+        const auto la = fretLine (fa), lb = fretLine (last);
         juce::Path window;
-        window.startNewSubPath (xa, boardEdge (true, xa));
-        window.lineTo (xb, boardEdge (true, xb));
-        window.lineTo (xb, boardEdge (false, xb));
-        window.lineTo (xa, boardEdge (false, xa));
+        window.startNewSubPath (la.getStart());
+        window.lineTo (lb.getStart());
+        window.lineTo (lb.getEnd());
+        window.lineTo (la.getEnd());
         window.closeSubPath();
         g.setColour (ParagonColours::accent.withAlpha (0.10f));
         g.fillPath (window);
         for (int f = juce::jmax (1, first); f <= last; ++f)
-            glow (g, line ({ fretX (f), boardEdge (true, fretX (f)) + 2.0f }, { fretX (f), boardEdge (false, fretX (f)) - 2.0f }),
-                  juce::Colour (0xffff9646), 1.6f, 0.9f);
+        {
+            const auto wire = fretLine (f, -2.0f);
+            glow (g, line (wire.getStart(), wire.getEnd()), juce::Colour (0xffff9646), 1.6f, 0.9f);
+        }
         const auto yb = juce::jmax (boardEdge (false, xa), boardEdge (false, xb)) + 16.0f;
         juce::Path bracket;
         bracket.startNewSubPath (xb, yb - 6.0f);
@@ -530,9 +568,9 @@ void GuitarView::paintNeck (juce::Graphics& g)
     }
     for (int s = 0; s < guitar::numStrings; ++s)
     {
-        // (just past the nut, by the window's right edge: 0.6.3's full-size guitar, as 0.4's)
-        const auto x = 1585.0f;
-        const auto y = stringY (s, 1584.0f);
+        // (just past the nut, along its slant on the fanned bass, kept inside the window)
+        const auto x = juce::jmin (fretXOn (s, 0) + 22.0f, 1586.0f);   // (clear of the nut, inside the window)
+        const auto y = stringY (s, x);
         text (g, juce::String (guitar::playerNumber (s)) + guitar::stringName (s), { x - 13.0f, y - 7.0f, 26.0f, 14.0f },
               Fretboard::stringColour (s).withAlpha (forced == s ? 1.0f : 0.8f), 9.0f, true, juce::Justification::centred);
     }
@@ -541,14 +579,16 @@ void GuitarView::paintNeck (juce::Graphics& g)
     if (capo > 0)
     {
         const auto x = fretX (capo - 1) * 0.35f + fretX (capo) * 0.65f;
-        glow (g, line ({ x, boardEdge (true, x) - 4.0f }, { x, boardEdge (false, x) + 4.0f }), ParagonColours::metalLight, 7.0f, 0.9f);
+        const auto behind = fretLine (capo - 1, 4.0f), at = fretLine (capo, 4.0f);   // (along the fan)
+        const auto bar = juce::Line<float> (behind.getStart() * 0.35f + at.getStart() * 0.65f, behind.getEnd() * 0.35f + at.getEnd() * 0.65f);
+        glow (g, line (bar.getStart(), bar.getEnd()), ParagonColours::metalLight, 7.0f, 0.9f);
         text (g, "CAPO " + juce::String (capo), { x - 40.0f, boardEdge (true, x) - 38.0f, 80.0f, 14.0f }, ParagonColours::metalLight, 10.0f, true,
               juce::Justification::centred);
     }
 
     // A forced string glows along its length.
     if (forced >= 0)
-        glow (g, line ({ 0.0f, stringY (forced, 0.0f) }, { fretX (0), stringY (forced, fretX (0)) }), Fretboard::stringColour (forced), 1.6f, 0.85f);
+        glow (g, line ({ 0.0f, stringY (forced, 0.0f) }, { fretXOn (forced, 0), stringY (forced, fretXOn (forced, 0)) }), Fretboard::stringColour (forced), 1.6f, 0.85f);
 
     // The notes: a solid dot sustained, a ring palm-muted; the string lit from the note to the bridge (off to the left).
     for (int s = 0; s < guitar::numStrings; ++s)

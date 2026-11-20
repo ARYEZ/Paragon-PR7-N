@@ -200,7 +200,7 @@ HEADLESS = os.environ.get("GUITAR_HEADLESS", "0") == "1"
 # PR7-N: a 5-string bass with fanned frets (GUITAR_BASS=1). Each string its own scale, longest on the low side as the
 # reference body's bass (37" to 34.25": +/-4% round the middle), the frets slanted so that GUITAR_FAN_FRET (7: our
 # guess) stays square; the average scale the guitars' own, so all 24 frets fit the same window at the same size.
-BASS = os.environ.get("GUITAR_BASS", "0") == "1"
+BASS = os.environ.get("GUITAR_BASS", "1") == "1"   # (PR7-N: the bass by default; 0: PR7-I's guitar)
 NSTR = 5 if BASS else 7
 FAN = float(os.environ.get("GUITAR_FAN", "0.04")) if BASS else 0.0
 FAN_FRET = float(os.environ.get("GUITAR_FAN_FRET", "7"))
@@ -269,7 +269,7 @@ OUTLINE_PARTS = [
 # from the fretboard's end and the neck's centre line); OUTLINE_PARTS above is the drawn one it replaced
 BOARD_END = X_BRIDGE + L * 2 ** (-24 / 12) - 0.007
 # (GUITAR_OUTLINE: another body's outline, from trace_body.py; a sibling plugin's guitar differs only in this)
-with open(os.environ.get("GUITAR_OUTLINE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "body-outline.json"))) as f:
+with open(os.environ.get("GUITAR_OUTLINE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "body-outline-bass.json" if BASS else "body-outline.json"))) as f:
     outline = [(BOARD_END + x / 1000.0, y / 1000.0) for x, y in json.load(f)["points"]]
 # 0.4.7: the traced outline smoothed (the owner: "the edges could be much smoother and straighter"): resampled every
 # millimetre along its length, then a gaussian over GUITAR_SMOOTH_MM along it, so the ~100 straight segments of the
@@ -398,7 +398,7 @@ else:
     # 0.5.0: the whole headstock (the guitar a third smaller shows it all), traced off the owner's photo of a 7-string's
     # headstock (headstock-outline.json: mm along the neck from the nut, + toward the low strings; no maker's name or
     # logo): the long pointed shape with its seven tuners in a row along the low strings' edge, PARAGON across it.
-    with open(os.environ.get("GUITAR_HEADSTOCK", os.path.join(os.path.dirname(os.path.abspath(__file__)), "headstock-outline.json"))) as f:
+    with open(os.environ.get("GUITAR_HEADSTOCK", os.path.join(os.path.dirname(os.path.abspath(__file__)), "headstock-outline-bass.json" if BASS else "headstock-outline.json"))) as f:
         head = json.load(f)
     H0 = X_NUT + 0.005   # where the headstock leaves the nut
     # (PR7-N: a fanned headstock's x is measured from the slanted nut line, so it starts at our own fanned nut)
@@ -663,10 +663,16 @@ if GEOMETRY:
         v = world_to_camera_view(scene, cam, Vector((x, y, z)))
         return [round(v.x * WIDTH, 2), round((1 - v.y) * HEIGHT, 2)]
     geo = {"width": WIDTH, "height": HEIGHT,
-           "strings": [{"bridge": px(X_BRIDGE, string_y(s, X_BRIDGE), z_string), "nut": px(X_NUT, string_y(s, X_NUT), z_string)} for s in range(7)],
-           "frets": [px(fret_x(f), 0, fb_top) for f in range(0, 25)],
-           "boardTop": [px(x, neck_half(x), fb_top) for x in (x_end, X_NUT)],
-           "boardBottom": [px(x, -neck_half(x), fb_top) for x in (x_end, X_NUT)]}
+           "strings": [{"bridge": px(bridge_at(string_y(s, X_BRIDGE)), string_y(s, X_BRIDGE), z_string),
+                        "nut": px(nut_at(string_y(s, X_NUT)), string_y(s, X_NUT), z_string)} for s in range(NSTR)],
+           "frets": [px(fx(f, 0.0), 0, fb_top) for f in range(0, 25)],
+           # PR7-N: each string's own frets (the fan: fret n where it crosses string s), and each fret's two ends at the
+           # board's edges (straight up and down on the guitars)
+           "fretsByString": [[px(fx(f, string_y(s, fx(f, 0.0))), string_y(s, fx(f, 0.0)), fb_top)[0] for f in range(0, 25)] for s in range(NSTR)],
+           "fretLines": [[px(fx(f, neck_half(fx(f, 0.0))), neck_half(fx(f, 0.0)), fb_top),
+                          px(fx(f, -neck_half(fx(f, 0.0))), -neck_half(fx(f, 0.0)), fb_top)] for f in range(0, 25)],
+           "boardTop": [px(board_end_at(neck_half(x_end)) + 0.007, neck_half(x_end), fb_top), px(nut_at(neck_half(X_NUT)), neck_half(X_NUT), fb_top)],
+           "boardBottom": [px(board_end_at(-neck_half(x_end)) + 0.007, -neck_half(x_end), fb_top), px(nut_at(-neck_half(X_NUT)), -neck_half(X_NUT), fb_top)]}
     with open(GEOMETRY, "w") as f:
         json.dump(geo, f)
 

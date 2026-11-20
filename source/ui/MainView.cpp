@@ -179,7 +179,7 @@ void MainView::checkLongJobs (double nowMs)
         loadingSince = nowMs;
     if (nowMs - loadingSince >= 500.0)
     {
-        progressBox.show ({ "LOADING THE GUITAR", [this] { return (double) audioProcessor.getLoadProgress(); }, {} });
+        progressBox.show ({ "LOADING THE BASS", [this] { return (double) audioProcessor.getLoadProgress(); }, {} });
         progressBox.toFront (false);
     }
 }

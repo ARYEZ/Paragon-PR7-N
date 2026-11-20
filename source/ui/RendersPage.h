@@ -38,7 +38,7 @@ private:
     void saveAllLists();
 
     ParagonX1AudioProcessor& processor;
-    SynthPanel guitarPanel { "THE GUITAR" }, renders { "RENDERS" };
+    SynthPanel guitarPanel { "THE BASS" }, renders { "RENDERS" };
     juce::TextButton sustainTab { "SUSTAIN" }, muteTab { "PALM MUTE" }, noisesTab { "NOISES" };
     bool showingNoises = false;
     std::vector<std::unique_ptr<NoiseRow>> noiseRows;

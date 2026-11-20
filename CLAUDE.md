@@ -1,4 +1,79 @@
-# Paragon PR7-I: notes for Claude
+# Paragon PR7-N: notes for Claude
+
+**Paragon PR7-N** is the PR7 family's **bass instrument** (the owner, November 2026: "our bass guitar, meant to emulate
+Djinn Bass 2, the body traced from a Dingwall NG3"): **PR7-I's plugin** (repo `ARYEZ/Paragon-PR7-I`: page, rack,
+engine, render lists, import, look) **made into a 5-string bass**. A new, separate plugin (PR7-B, the family's bass
+*amp* plugin, is untouched). It started from PR7-I's full history at its **0.7.2** (commit `ee40659` there), as PR7-A
+did. The reference is **Djinn Bass 2**: never its name, its maker's or Dingwall's on the plugin, the README or release
+notes ("the reference bass instrument", "a multiscale 5-string").
+
+## What makes PR7-N its own (0.1.0)
+
+- **Identity:** `PRODUCT_NAME` "Paragon PR7-N", `BUNDLE_ID` `com.paragon.paragonpr7n`, **`PLUGIN_CODE` `Pr7n`** (never a
+  sibling's: `Pr7i` PR7-I, `Pr7a` PR7-A, `Px1a` PR7-G, `Pr7b`, `Pr7v`, `Pr7c`, `Pr7e`, `Pr7k`, `Pr7d`, `Pr7m`; PR7-O's
+  and PR7-T's couldn't be read from this session: check if they ever clash), version from 0.1.0 (target `ParagonX1`).
+  String literals say PR7-N (presets folder, settings file "Paragon PR7-N", temp folder, threads, list names "PR7-N
+  Sustain - String 5 (low A)", About). Comments telling PR7-I's history keep its name.
+- **Logo** (`Logo.cpp`): "-N" from the P's parts (two 0.24 stems, a diagonal as thick, 0.8 wide); icon "7N" (2.0
+  letter heights wide).
+- **The bass** (`guitar/Tuning.h`): 5 strings, string 0 the low A .. 4 the G (a bassist's 5 .. 1), `openNotes` **33 40
+  45 50 55** (A0 E1 A1 D2 G2 in C3 naming), frets 0-24. **Keys = PR7-S's Djinn profile's** (`InstrumentProfile::
+  djinnBass2` in `ARYEZ/Paragon-PR7-S`, strings 33..55): the reference is played an octave above where it sounds (as
+  bass is written), so `soundingOffset` -12 / `soundingFrequency`; the imports (`RenderImport`, `NoiseImport`) check each
+  take at the sounding pitch **and** at the key's, the file judged by whichever fits more (which one Djinn really
+  sounds at isn't measured yet: the owner's first render will tell).
+- **The keyswitches** (`guitar/Keys.h`, the owner's screenshot of Djinn's KEYSWITCH MAP as typed into PR7-S; no manual
+  exists): 0 Main Alternating, 1 Main Up / Index, 2 Main Down / Mid, 3 Dead Note, 4 Slap, 5 Dead Slap, 6 Pop, 7 Dead
+  Pop, 8 Harmonic, 9 Hammer/Pull, 10 Tapping, 11 Slide Trigger, 16 Fret Hand Mute, 17 Palm Mute Alt, 18 Palm Mute Up,
+  19 Palm Mute Down, 20 Dead Strum, 98 Dead Palm Rest; force string 127 (low A, the map's "Force B String") .. 123 (G).
+  The engine (`Guitar::handle`): Main / Palm Mute keys latch sustain / mute **and set the picking** (alternate / down /
+  up: a keyswitch wins over the page's PICKING until that changes); unrendered keys latch `latchedKey` (shown on the
+  rack's screen: "NOT RENDERED YET: ... PLAYS") but leave `articulationKey` and the sound as they were; force keys are
+  **held** (forced from note-on to note-off: the map shows no off key; our reading). Notes outside 33..79 are keys only.
+  **Gone from PR7-I:** `KeyMap` and the `keyMap` parameter (SPLIT / FACTORY, the rack's keys, RENDERS' box), power
+  chords (`chord.power` always false), hand keys, picking keys 108-110, F#0 fret noise and the `fretNoise` parameter and
+  knob, `tools/ab-suite` and the `[ab-suite]` test.
+- **The render lists** (`RenderList.*`, played with Djinn's keys: the force key held over the whole file, the stroke key
+  (`keys::strokeKey`) before each take; each (fret, layer)'s downs in a row then its ups, PR7-I's v2 order, for both
+  articulations): **sustain** 3 dynamics 45 / 85 / 118, **4 round-robins** a stroke, 3.5 s in 4.5 s slots (600 takes,
+  45 min a string); **mute** 5 velocities 13 / 38 / 64 / 89 / 115, 8 round-robins, 1 s in 1.6 s (2000, 53.4 min). **Our
+  guesses, not fixed yet**: the owner should render the **round-robin check** first (`rrcheck`, "PR7-N Round-Robin
+  Check", 12 min: sustain low A open 118 and G 5th 85, palm mute low A and G open 64, then the low A 5th fret sustained
+  at 20 / 50 / 80 / 105 / 127 to hear the dynamics; 16 downs then 16 ups each), analysed with `PARAGON_RR_CHECK=<wav>
+  GuitarCoreTests "[rr-check]"`; then fit the lists (fewer round-robins if Djinn has fewer, the dynamics' velocities
+  if its layers differ) **before** the owner renders them, and fix their layout then. The palm-mute and order checks
+  are PR7-I's on the bass's strings.
+- **The noise lists:** the pitched releases (per string) and the unpitched list only (`noises::numRows` 6: rows 0-4
+  strings, 5 unpitched; power-chord and fret-noise lists stay in the code, off the page); Main Down and the held force
+  key per hit. Whether Djinn has release noises, and whether its notes can be silenced alone, is unknown.
+- **The picture** (`resources/guitar/guitar3d.py`, PR7-I's script with `GUITAR_BASS`, **1 by default here**): 5 strings
+  (r 0.75 mm down by 0.1 a string), **fanned frets** (`GUITAR_FAN` 0.04: each string's scale `L (1 + FAN y / FAN_Y)`,
+  longest on the low side; `GUITAR_FAN_FRET` 7 square: the owner OK'd it), the board / nut / bridge plate slanted
+  (`board_end_at`, `nut_at`, `bridge_at`), three pickups slanted with the fan (at 122 / 95 / 68 mm, one pole a string),
+  the heel stopping at the board's end (`HEEL` 0.002: it covered the neck pickup), the body `body-outline-bass.json`
+  (`trace_body_bass.py` off the owner's photo of a white NG3, strap-button bump cleaned, the neck's gap squared) and
+  the headstock `headstock-outline-bass.json` (`trace_headstock_bass.py` off their photo; mostly off the window at this
+  size), zoom 0.85 (PR7-I's), nut x 1560, neck y 550. `GUITAR_BASS=0` renders PR7-I's guitar from the RG files still
+  here. The photos are never committed. **Geometry** (`guitar-geometry.json`) now also has `fretsByString` (each fret's
+  x where it crosses each string) and `fretLines` (each fret's two ends at the board's edges); `GuitarView::fretXOn`,
+  `fretLine` use them (notes between the slanted frets, the hand window and capo along the fan); a picture without
+  them reads as straight frets (PR7-I's).
+- **CHANGELOG** from 0.1.0; README; this section; the release workflow's names (`Paragon PR7-N.vst3`,
+  `ParagonPR7-N-${TAG}-...`).
+
+## Keeping PR7-N in step with PR7-I
+
+Shared features land in PR7-I first. To bring them: `git remote add pr7i https://github.com/ARYEZ/Paragon-PR7-I`,
+fetch, merge, keep PR7-N's side for its identity and the bass (the files above: `Tuning.h`, `Keys.h`, the engine's key
+handling, `RenderList.cpp`'s specs and keys, `NoiseLists.cpp`'s rows and keys, `RoundRobinCheck.cpp`'s groups, the
+picture and geometry, the removed parameters, logo, docs). Each PR7-N release says which PR7-I version it matches.
+
+---
+
+The notes below are PR7-I's (the shared code's history and rules); read "PR7-I" there as the shared design, "the
+guitar" as the bass where the bass's own section above says so.
+
+# Paragon PR7-I: notes for Claude (inherited)
 
 This repository starts as a copy of **Paragon PR7-D** (the drum instrument, repo `ARYEZ/Paragon-PR7-D`) at PR7-D **0.60.0** plus its CI fix for pluginval (branch `claude/new-session-yhgoe4`, commit `aab0ee8`), full history included, to become **Paragon PR7-I**, the **guitar instrument** of the PR7 family: a VST3 instrument played from MIDI, a spiritual cousin of Impact Soundworks' Shreddage 3 (it works the way that plugin works, but sounds and runs the way the owner wants; no Kontakt). The owner plays **djent and progressive metal**: weigh features by what helps tight, palm-muted rhythm parts. Siblings: **PR7-G** (the guitar amp-and-effects plugin, `ARYEZ/Paragon-PR7-G`), **PR7-D** (drums), **PR7-K** (synth), **PR7-B** (bass), **PR7-V** (vocal), **PR7-C**, **PR7-X** (utility; PR7-E until its 0.20.0), **PR7-M**, and **PR7-S** (the owner's DAW, based on Cubase 15).
 
