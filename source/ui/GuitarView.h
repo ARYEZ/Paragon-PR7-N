@@ -62,11 +62,10 @@ private:
     ParamControl tone, bite, attack, transpose, velToVol, release, polyWindow, variation, level, output, pickMode, fretMode;
     GuitarRack rack;   // 0.5.0: the main controls on a rack unit, as PR7-G's
     juce::TextButton rackButton { "HIDE RACK" };   // 0.6.3: bottom right, never under the rack
-    juce::TextButton variationOn, splitMap, factoryMap;   // the rack's small keys (their stripes lit while on)
+    juce::TextButton variationOn;   // the rack's small key (its stripe lit while on)
     ParamControl forceString, handPosition;   // the rack's FRETTING page
-    ParamControl releaseNoise, scrapes, fretNoise;   // 0.6.0: the rack's NOISES page
+    ParamControl releaseNoise, scrapes;   // 0.6.0: the rack's NOISES page (PR7-N: no fret noise)
     juce::ComboBox performance;
-    std::unique_ptr<juce::ParameterAttachment> keyMapAttachment;
     std::vector<std::unique_ptr<ValueBox>> boxes;
     float meterDb = -100.0f;
 
@@ -76,7 +75,7 @@ private:
     int hand = 1, span = 4, forced = -1, capo = 0;
     juce::uint32 nowCount = 0;
     guitar::Guitar::NowPlaying now;
-    int latchedKey = guitar::keyswitch::c1;
+    int latchedKey = guitar::keys::mainAlternate;
     bool draggingCapo = false;
     float lastVariation = 0.5f;
 };

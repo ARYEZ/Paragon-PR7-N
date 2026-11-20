@@ -6,7 +6,7 @@
 // a new ID instead. Choices are saved by index: only ever append to a choice list, never reorder it.
 //
 // PR7-I 0.2.0 starts its own set (the guitar's); PR7-D's drum and effect parameters are gone. Version hints count from
-// 1 again (1: 0.2.0).
+// 1 again (1: 0.2.0). PR7-N 0.1.0 keeps PR7-I's IDs and hints (a new plugin: nothing of its own saved yet).
 namespace ParamIDs
 {
     // Global: not part of a preset.
@@ -14,10 +14,7 @@ namespace ParamIDs
     inline constexpr auto bypass     = "bypass";
     // NOTE NAMES: how notes are named (notenames::choiceNames: middle C is C3 or C4).
     inline constexpr auto noteNames  = "noteNames";
-    // KEY MAP (0.3.0, hint 3): how the articulation keyswitches work (guitar::KeyMap): the owner's own map (C-1 palm
-    // mute / sustain by velocity) or the reference's factory one. Not in presets: it belongs to the MIDI parts.
-    inline constexpr auto keyMap     = "keyMap";
-    inline const juce::StringArray keyMapNames { "Split (C-1 by velocity)", "Factory (C-1 / C#-1)" };
+    // (PR7-N 0.1.0: no KEY MAP: the bass plays the reference bass's own map, guitar/Keys.h.)
 
     // In presets.
     inline constexpr auto patchLevel = "patchLevel";   // the preset's own level
@@ -25,7 +22,7 @@ namespace ParamIDs
     inline constexpr auto tone           = "tone";            // a gentle low-pass on the whole guitar (Hz; the top: open)
     inline constexpr auto fretMode       = "fretMode";        // guitar::FretMode
     inline constexpr auto pickMode       = "pickMode";        // guitar::PickMode
-    inline constexpr auto forceString    = "forceString";     // 0 off, then strings 7 (low A) .. 1 (high E)
+    inline constexpr auto forceString    = "forceString";     // 0 off, then strings 5 (low A) .. 1 (G)
     inline constexpr auto handPosition   = "handPosition";    // 0 AUTO, else the hand's fret
     inline constexpr auto velocityToVolume = "velToVol";
     inline constexpr auto release        = "release";         // seconds: a note-off damping its string
@@ -43,16 +40,16 @@ namespace ParamIDs
     // release has an unpitched scrape mixed in (guitar::Settings).
     inline constexpr auto releaseNoise   = "releaseNoise";    // dB: the releases at note-offs
     inline constexpr auto scrapes        = "scrapes";         // 0..1: the chance a release has a scrape
-    inline constexpr auto fretNoise      = "fretNoise";       // dB: fret noise on F#0
+    // (PR7-N 0.1.0: no FRET NOISE: the reference bass's map shows no key for it.)
 
     inline const juce::StringArray fretModeNames { "Natural", "Polyphonic" };
     inline const juce::StringArray pickModeNames { "Alternate", "Down", "Up", "Economy" };
     inline const juce::StringArray handSpanNames { "Auto", "2", "3", "4", "5", "6", "7", "8" };
-    inline const juce::StringArray forceStringNames { "Off", "String 7 (low A)", "String 6 (E)", "String 5 (A)", "String 4 (D)",
-                                                      "String 3 (G)", "String 2 (B)", "String 1 (high E)" };
+    inline const juce::StringArray forceStringNames { "Off", "String 5 (low A)", "String 4 (E)", "String 3 (A)", "String 2 (D)",
+                                                      "String 1 (G)" };
 
     // Not in presets: they belong to the project (or the computer), not the sound.
-    inline const juce::StringArray notInRigs { outputGain, bypass, noteNames, keyMap };
+    inline const juce::StringArray notInRigs { outputGain, bypass, noteNames };
 }
 
 namespace ParamRanges

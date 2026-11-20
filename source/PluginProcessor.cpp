@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "guitar/RoundRobinCheck.h"
 #include "PluginEditor.h"
 
 namespace
@@ -28,7 +29,6 @@ ParagonX1AudioProcessor::ParagonX1AudioProcessor()
     releaseValue = find (ParamIDs::release);
     transposeValue = find (ParamIDs::transpose);
     variationValue = find (ParamIDs::variation);
-    keyMapValue = find (ParamIDs::keyMap);
     patchLevelValue = find (ParamIDs::patchLevel);
     outputValue = find (ParamIDs::outputGain);
     bypassValue = find (ParamIDs::bypass);
@@ -41,7 +41,6 @@ ParagonX1AudioProcessor::ParagonX1AudioProcessor()
     attackValue = find (ParamIDs::attack);
     releaseNoiseValue = find (ParamIDs::releaseNoise);
     scrapesValue = find (ParamIDs::scrapes);
-    fretNoiseValue = find (ParamIDs::fretNoise);
 
     rigLibrary = std::make_unique<RigLibrary>();
     if (midiLinksDefaultFile().existsAsFile())
@@ -182,7 +181,6 @@ guitar::Settings ParagonX1AudioProcessor::getGuitarSettings() const noexcept
     s.releaseSeconds = releaseValue->load();
     s.transpose = juce::roundToInt (transposeValue->load());
     s.variation = variationValue->load();
-    s.keyMap = (guitar::KeyMap) juce::jlimit (0, ParamIDs::keyMapNames.size() - 1, juce::roundToInt (keyMapValue->load()));
     s.capo = juce::roundToInt (capoValue->load());
     const auto span = juce::roundToInt (handSpanValue->load());
     s.handSpan = span <= 0 ? 0 : span + 1;   // handSpanNames: Auto, 2, 3...
@@ -191,8 +189,8 @@ guitar::Settings ParagonX1AudioProcessor::getGuitarSettings() const noexcept
     s.attack = attackValue->load();
     const auto noiseGain = [] (float db) { return db <= ParamRanges::noiseMinDb + 0.05f ? 0.0f : juce::Decibels::decibelsToGain (db); };
     s.releaseNoise = noiseGain (releaseNoiseValue->load());
+    s.fretNoise = 0.0f;   // (PR7-N: no fret noise key)
     s.scrapes = scrapesValue->load();
-    s.fretNoise = noiseGain (fretNoiseValue->load());
     return s;
 }
 
@@ -407,6 +405,13 @@ bool ParagonX1AudioProcessor::saveAllRenderLists (const juce::File& folder) cons
     {
         const auto which = guitar::noises::rowList (row);
         ok = saveNoiseList (row, folder.getChildFile (guitar::noises::fileName (which.list, which.string) + ".mid")) && ok;
+    }
+    // PR7-N 0.1.0: the round-robin check too (render it first: it shows how many takes the reference bass has).
+    {
+        const auto file = folder.getChildFile (guitar::renders::rrcheck::fileName + ".mid");
+        file.deleteFile();
+        juce::FileOutputStream out (file);
+        ok = out.openedOk() && guitar::renders::rrcheck::toMidi().writeTo (out) && ok;
     }
     return ok;
 }

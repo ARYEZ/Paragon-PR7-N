@@ -39,7 +39,6 @@ private:
 
     ParagonX1AudioProcessor& processor;
     SynthPanel guitarPanel { "THE GUITAR" }, renders { "RENDERS" };
-    ParamControl keyMap;
     juce::TextButton sustainTab { "SUSTAIN" }, muteTab { "PALM MUTE" }, noisesTab { "NOISES" };
     bool showingNoises = false;
     std::vector<std::unique_ptr<NoiseRow>> noiseRows;

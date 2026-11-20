@@ -57,7 +57,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     add (layout, outputGain, "Output", { ParamRanges::gainMinDb, ParamRanges::gainMaxDb, 0.1f }, ParamRanges::outputDefaultDb, asDb);
     addSwitch (layout, bypass, "Bypass", false);
     addChoice (layout, noteNames, "Note Names", notenames::choiceNames, 0);
-    addChoice (layout, keyMap, "Key Map", keyMapNames, 0, v030b);
     add (layout, patchLevel, "Preset Level", { ParamRanges::gainMinDb, ParamRanges::gainMaxDb, 0.1f }, 0.0f, asDb);
 
     // THE GUITAR.
@@ -90,6 +89,5 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     };
     add (layout, releaseNoise, "Release Noise", { ParamRanges::noiseMinDb, ParamRanges::noiseMaxDb, 0.1f }, 0.0f, noiseLevel, v060);
     add (layout, scrapes, "Scrapes", { 0.0f, 1.0f, 0.01f }, 0.12f, asPercent, v060);
-    add (layout, fretNoise, "Fret Noise", { ParamRanges::noiseMinDb, ParamRanges::noiseMaxDb, 0.1f }, 0.0f, noiseLevel, v060);
     return layout;
 }

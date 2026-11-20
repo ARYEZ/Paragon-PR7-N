@@ -217,20 +217,18 @@ GuitarView::GuitarView (ParagonX1AudioProcessor& p)
       fretMode (p.getParameters(), ParamIDs::fretMode, "FRETTING MODE",
                 "Natural: the hand follows the notes, 4 frets wide. Polyphonic: 5 wide, chords over as many strings as notes"),
       forceString (p.getParameters(), ParamIDs::forceString, "FORCE STRING",
-                   "Every note on that string where it can be (7: the low A ... 1: the high E). Off: the hand chooses", true),
+                   "Every note on that string where it can be (5: the low A ... 1: the G). Off: the hand chooses", true),
       handPosition (p.getParameters(), ParamIDs::handPosition, "HAND POSITION",
                     "Where the hand sits on the neck. Auto: it follows the notes"),
       releaseNoise (p.getParameters(), ParamIDs::releaseNoise, "RELEASE NOISE",
                     "The finger leaving the string at each note-off (imported from the noise lists): its level. Fuller on notes held "
                     "up to a second, none after two; palm mutes have none. Off at the bottom"),
       scrapes (p.getParameters(), ParamIDs::scrapes, "SCRAPES",
-               "How often a release has an unpitched scrape mixed in (your guitar instrument: about 1 in 8)"),
-      fretNoise (p.getParameters(), ParamIDs::fretNoise, "FRET NOISE",
-                 "The level of the fret noise F#0 plays (its velocity sets how loud too). Off at the bottom")
+               "How often a release has an unpitched scrape mixed in (PR7-I's guitar reference: about 1 in 8)")
 {
     addAndMakeVisible (rack);
     for (auto* c : { &tone, &bite, &attack, &transpose, &velToVol, &release, &polyWindow, &variation, &level, &output,
-                     &forceString, &handPosition, &releaseNoise, &scrapes, &fretNoise })
+                     &forceString, &handPosition, &releaseNoise, &scrapes })
     {
         c->setRack (true);
         rack.addAndMakeVisible (*c);
@@ -267,22 +265,8 @@ GuitarView::GuitarView (ParagonX1AudioProcessor& p)
     };
     rack.addAndMakeVisible (variationOn);
 
-    auto* keyMap = p.getParameters().getParameter (ParamIDs::keyMap);
-    keyMapAttachment = std::make_unique<juce::ParameterAttachment> (*keyMap, [this] (float v)
-    {
-        splitMap.setToggleState (juce::roundToInt (v) == 0, juce::dontSendNotification);
-        factoryMap.setToggleState (juce::roundToInt (v) == 1, juce::dontSendNotification);
-    });
-    splitMap.setTooltip ("Your own keyswitch map: C-1 plays palm mutes at velocities 1-59 and sustain at 60-119 (each scaled "
-                         "over all its dynamics); C#-1 the same as power chords");
-    factoryMap.setTooltip ("Your guitar instrument's factory keyswitches: C-1 sustain, C#-1 palm mute, D#-1 and E-1 their power chords");
-    splitMap.onClick = [this] { keyMapAttachment->setValueAsCompleteGesture (0.0f); };
-    factoryMap.onClick = [this] { keyMapAttachment->setValueAsCompleteGesture (1.0f); };
-    keyMapAttachment->sendInitialUpdate();
-    for (auto* b : { &splitMap, &factoryMap, &variationOn })
-        b->getProperties().set (ParagonLookAndFeel::pedalButtonProperty, true);   // a small key, only its stripe lettered
-    rack.addAndMakeVisible (splitMap);
-    rack.addAndMakeVisible (factoryMap);
+    // (PR7-N: no SPLIT / FACTORY keys: the bass plays the reference bass's own key map, Keys.h.)
+    variationOn.getProperties().set (ParagonLookAndFeel::pedalButtonProperty, true);   // a small key, only its stripe lettered
 
     auto& state = p.getParameters();
     boxes.push_back (std::make_unique<ValueBox> (state, ParamIDs::capo, "CAPO",
@@ -328,8 +312,6 @@ void GuitarView::resized()
         knobs[i]->setBounds (rack.knobCell (i));
     level.setBounds (rack.sideKnobCell (0));
     output.setBounds (rack.sideKnobCell (1));
-    splitMap.setBounds (rack.keyCell (0));
-    factoryMap.setBounds (rack.keyCell (1));
     variationOn.setBounds (rack.keyCell (2));
 
     // The rack's FRETTING page: the menus, the two knobs, the value boxes.
@@ -343,7 +325,6 @@ void GuitarView::resized()
     // NOISES.
     releaseNoise.setBounds (rack.noiseKnobCell (0));
     scrapes.setBounds (rack.noiseKnobCell (1));
-    fretNoise.setBounds (rack.noiseKnobCell (2));
 }
 
 void GuitarView::showRack (bool shown)
@@ -362,7 +343,7 @@ void GuitarView::showRackPage()
         c->setVisible (fretting);
     for (auto& b : boxes)
         b->setVisible (fretting);
-    for (auto* c : std::initializer_list<juce::Component*> { &releaseNoise, &scrapes, &fretNoise })
+    for (auto* c : std::initializer_list<juce::Component*> { &releaseNoise, &scrapes })
         c->setVisible (page == GuitarRack::Page::noises);
 }
 
@@ -443,19 +424,20 @@ void GuitarView::refresh()
     {
         nowCount = n.count;
         now = n;
-        latchedKey = guitar.getArticulationKey();
+        latchedKey = guitar.getLatchedKey();
     }
 
     // The rack's screen: the key map and what's latched, then the last note; its meter; its status bar (off while bypassed).
     {
-        const auto split = settings.keyMap == guitar::KeyMap::split;
-        using namespace guitar::keyswitch;
-        const auto power = split ? latchedKey == cSharp1 : (latchedKey == dSharp1 || latchedKey == e1);
         const auto played = now.note >= 0;
         const auto isMute = played && now.articulation == guitar::Articulation::mute;
+        const auto rendered = guitar::keys::latchedBy (latchedKey).rendered;
         GuitarRack::Screen screen;
-        screen.caption = split ? "KEY MAP  SPLIT  (C-1 BY VELOCITY)" : "KEY MAP  FACTORY";
-        screen.articulation = juce::String (power ? "POWER " : "") + (isMute ? "PALM MUTE" : "SUSTAIN");
+        // PR7-N: the reference bass's key latched, by its map's name; one not rendered yet says what plays instead.
+        screen.caption = rendered ? juce::String ("KEYSWITCH") : "NOT RENDERED YET: "
+                                    + juce::String (guitar::keys::latchedBy (guitar.getArticulationKey()).articulation == guitar::Articulation::mute ? "PALM MUTE" : "SUSTAIN")
+                                    + " PLAYS";
+        screen.articulation = juce::String (guitar::keys::nameOf (latchedKey)).toUpperCase();
         screen.key = notenames::name (latchedKey);
         screen.line1 = played ? notenames::name (now.note) + "   VEL " + juce::String (now.inputVelocity) + "   TAKE "
                                     + juce::String (now.roundRobin + 1) + "/" + juce::String (now.roundRobins)
@@ -476,9 +458,8 @@ void GuitarView::refresh()
                 strings += n > 0 ? 1 : 0;
             }
             juce::StringArray lines;
-            lines.add ("RELEASES  " + juce::String (releases) + "  (" + juce::String (strings) + " OF 7 STRINGS)");
-            lines.add ("POWER CHORDS  " + juce::String (library->noiseCount (List::powerChordRelease)));
-            lines.add ("SCRAPES  " + juce::String (library->noiseCount (List::unpitched)) + "    FRET NOISE  " + juce::String (library->noiseCount (List::fretNoise)));
+            lines.add ("RELEASES  " + juce::String (releases) + "  (" + juce::String (strings) + " OF " + juce::String (guitar::numStrings) + " STRINGS)");
+            lines.add ("SCRAPES  " + juce::String (library->noiseCount (List::unpitched)));
             lines.add (library->noiseTotal() == 0 ? "NONE YET: IMPORT THEM ON THE RENDERS PAGE (NOISES)" : "MORE ON THE RENDERS PAGE (NOISES)");
             rack.setNoiseInfo (lines);
         }

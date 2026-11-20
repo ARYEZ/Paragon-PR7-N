@@ -174,19 +174,17 @@ void SettingsPage::paint (juce::Graphics& g)
     };
 
     const auto note = [] (int n) { return notenames::name (n); };
-    section (keysArea, "THE KEYSWITCHES", "Below the guitar's lowest note and above its highest, as your guitar instrument's "
-                                          "defaults, so parts written for it play the same here:");
+    section (keysArea, "THE KEYSWITCHES", "Below the bass's lowest note and above its highest, as your bass instrument's "
+                                          "keyswitch map, so parts written for it play the same here:");
     {
         auto list = keysArea.reduced (24, 18).withTrimmedTop (84).withTrimmedBottom (ParamControl::knobHeight);
         const std::pair<juce::String, juce::String> keys[] {
-            { note (0) + " to " + note (6), "Force string: " + note (0) + " the low A (string 7) ... " + note (6) + " the high E (string 1)" },
-            { note (7), "Force string off" },
-            { note (10), "Hand position: the fret is the key's velocity" },
-            { note (11), "Hand position AUTO" },
-            { note (12) + " / " + note (13), "SPLIT map (your own): palm mute at velocity 1-59, sustain at 60-119 (C#-1: as power chords)" },
-            { note (12) + " / " + note (13), "FACTORY map: C-1 sustain, C#-1 palm mute (D#-1 / E-1: power chords)" },
-            { note (108) + " / " + note (109) + " / " + note (110), "Picking mode: up / down / alternate" },
-            { note (guitar::lowestNote) + " to " + note (guitar::highestNote), "The notes: low A open to the high E's 24th fret" } };
+            { note (0) + " / " + note (1) + " / " + note (2), "Main: sustain, picking alternate / up / down" },
+            { note (17) + " / " + note (18) + " / " + note (19), "Palm mute (velocity: how muted), picking alternate / up / down" },
+            { note (3) + " to " + note (11) + ", " + note (16) + ", " + note (20) + ", " + note (98),
+              "Dead notes, slap, pop, harmonic, hammer / pull, tapping, slide, fret-hand mute, dead strum, dead palm rest: not rendered yet" },
+            { note (127) + " to " + note (123), "Force string while held: " + note (127) + " the low A (string 5) ... " + note (123) + " the G (string 1)" },
+            { note (guitar::lowestNote) + " to " + note (guitar::highestNote), "The notes: the low A open to the G's 24th fret" } };
         g.setFont (juce::FontOptions (13.5f));
         for (const auto& [k, what] : keys)
         {
@@ -208,8 +206,8 @@ void SettingsPage::paint (juce::Graphics& g)
                                  "SAVE AS DEFAULT for every new PR7-N."));
     section (aboutArea, "ABOUT",
              juce::String ("Paragon PR7-N v") + JucePlugin_VersionString
-                 + ". The PR7 family's guitar instrument: a 7-string in drop A played from MIDI, from takes you render or record "
-                   "and import (none ship with it). Our own design and code, inspired by how commercial guitar instruments play. "
+                 + ". The PR7 family's bass instrument: a 5-string in drop A played from MIDI, from takes you render or record "
+                   "and import (none ship with it). Our own design and code, inspired by how commercial bass instruments play. "
                    "Put PR7-G after it for amps, cabinets and effects. Free and open source under the GNU AGPLv3.\n"
                    "Built with JUCE (AGPLv3) and the Inter typeface (SIL OFL).");
 }

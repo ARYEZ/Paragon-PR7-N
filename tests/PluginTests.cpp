@@ -138,8 +138,8 @@ TEST_CASE ("THE PLUGIN: a render imported, the guitar folder loaded, notes playe
     const auto render = fakeRenderFile (2, t.folder.getChildFile ("A string.wav"));
     t.p.startImport (render, Articulation::sustain, 2);
     REQUIRE (t.p.waitUntilIdle (60000));
-    CHECK (t.p.getImportReport (Articulation::sustain, 2) == "300 notes imported, all in tune");
-    CHECK (t.p.getLibrary()->count (Articulation::sustain, 2) == 300);
+    CHECK (t.p.getImportReport (Articulation::sustain, 2) == "600 notes imported, all in tune");
+    CHECK (t.p.getLibrary()->count (Articulation::sustain, 2) == 600);
     CHECK (guitarFolder.getChildFile ("Sustain/s2_f00_l1_d_r0.wav").existsAsFile());
     CHECK (t.p.getImportReport (Articulation::sustain, 3).isEmpty());
 
@@ -329,11 +329,11 @@ TEST_CASE ("THE WINDOW: GUITAR, RENDERS, PRESETS and SETTINGS tabs; the GUITAR p
     CHECK (view->getGuitarView().isVisible());
 
     // The rows of RENDERS: each string's, what's there for it.
-    CHECK (view->getRendersPage().getRow (0).getStatus().startsWith ("25 different takes (the other 275"));   // (0.6.1: what's there, not "of 300")
+    CHECK (view->getRendersPage().getRow (0).getStatus().startsWith ("25 different takes (the other 575"));   // (0.6.1: what's there, not "of 600")
     view->getRendersPage().refresh();
-    CHECK (view->getRendersPage().getGuitarStatus().contains ("175 takes"));
+    CHECK (view->getRendersPage().getGuitarStatus().contains ("125 takes"));
 
-    // A power chord on the low strings: the fretboard lights the strings and frets it's played on.
+    // Three open strings: the fretboard lights the strings and frets it's played on.
     t.play (2, { { 33, 100 }, { 40, 100 }, { 45, 100 } });
     view->getFretboard().refresh();
     view->getGuitarView().refresh();
@@ -356,7 +356,7 @@ TEST_CASE ("THE WINDOW: GUITAR, RENDERS, PRESETS and SETTINGS tabs; the GUITAR p
     const auto& neck = view->getGuitarView();
     CHECK_THAT ((neck.fretX (12) - neck.fretX (0)) / (neck.fretX (24) - neck.fretX (0)), WithinAbs (2.0 / 3.0, 0.001));
     CHECK (neck.fretX (0) > neck.fretX (24));
-    CHECK (neck.noteCentre (0, 5).y < neck.noteCentre (6, 5).y);
+    CHECK (neck.noteCentre (0, 5).y < neck.noteCentre (4, 5).y);
     CHECK (neck.fretAt (neck.noteCentre (0, 7).x) == 7);
     CHECK (neck.fretAt (neck.fretX (0) - 5.0f) == 0);
     // The fret wires as on a real neck: the 12th halfway to the bridge's end of the neck's span (2/3 of the drawn neck).
@@ -401,11 +401,11 @@ TEST_CASE ("0.2.2: VARIATION off by default, and in projects and presets saved b
     CHECK (Rig::fromXml (*rig.toXml())->parameters.at (ParamIDs::variation) == 0.5f);
 }
 
-TEST_CASE ("PALM MUTE 0.3.0: a palm-mute render imported into Mute; played palm-muted by the owner's split map; KEY MAP", "[plugin]")
+TEST_CASE ("PALM MUTE: a palm-mute render imported into Mute; played palm-muted by the reference bass's PALM MUTE key", "[plugin]")
 {
     Plugin t;
-    CHECK (t.p.getGuitarSettings().keyMap == guitar::KeyMap::split);     // the owner's own map, by default
-    CHECK (ParamIDs::notInRigs.contains (ParamIDs::keyMap));            // it belongs to the MIDI parts, not the sound
+    CHECK (t.p.getParameters().getParameter ("keyMap") == nullptr);   // (PR7-N: no KEY MAP, the bass plays one map)
+    CHECK (t.p.getParameters().getParameter ("fretNoise") == nullptr);
     const auto guitarFolder = t.folder.getChildFile ("Mutes");
     t.p.setGuitarFolder (guitarFolder);
     REQUIRE (t.p.waitUntilIdle (10000));
@@ -417,9 +417,8 @@ TEST_CASE ("PALM MUTE 0.3.0: a palm-mute render imported into Mute; played palm-
     CHECK (guitarFolder.getChildFile ("Mute/s0_f00_l4_u_r7.wav").existsAsFile());
     CHECK (t.p.getImportReport (Articulation::sustain, 0).isEmpty());
 
-    // C-1 (latched from the start) at velocity 30: the low A palm-muted; 100: sustain (none imported: the mutes stand in,
-    // at the nearest... as the library finds them).
-    t.play (1, { { 33, 30 } });
+    // PALM MUTE DOWN, then the low A at velocity 30: palm-muted.
+    t.play (1, { { guitar::keys::palmMuteDown, 100 }, { 33, 30 } });
     t.play (4);
     CHECK (t.p.getGuitar().getSounding (0).muted);
     CHECK (t.p.getGuitar().getSounding (0).fret == 0);
@@ -504,7 +503,7 @@ TEST_CASE ("THE NOISES 0.6.0: a release render imported from its NOISES row, pla
     renders.showNoises();
     renders.refresh();
     CHECK (renders.getNoiseRow (0).getStatus().startsWith ("25 releases imported"));
-    CHECK (renders.getNoiseRow (9).getStatus() == "Not imported");
+    CHECK (renders.getNoiseRow (5).getStatus() == "Not imported");   // (PR7-N: the unpitched row, the last)
     checkLayout (renders, "renders (noises)");
     auto& page = view->getGuitarView();
     std::vector<ParamControl*> controls;
@@ -521,7 +520,6 @@ TEST_CASE ("THE NOISES 0.6.0: a release render imported from its NOISES row, pla
     page.getRack().getPageKey (GuitarRack::Page::noises).onClick();
     CHECK (control (ParamIDs::releaseNoise)->isVisible());
     CHECK (control (ParamIDs::scrapes)->isVisible());
-    CHECK (control (ParamIDs::fretNoise)->isVisible());
     CHECK_FALSE (control (ParamIDs::tone)->isVisible());
     checkLayout (page, "guitar view (noises)");
 }
@@ -677,7 +675,8 @@ TEST_CASE ("THE RACK 0.5.0: the GUITAR page's controls on a rack unit with two p
 
     // The screen: what's latched before anything is played.
     page.refresh();
-    CHECK (rack.getScreen().articulation == "SUSTAIN");
+    CHECK (rack.getScreen().articulation == "MAIN ALTERNATING");   // (PR7-N: the reference bass's key, by its name)
+    CHECK (rack.getScreen().caption == "KEYSWITCH");
     CHECK (rack.getScreen().line1 == "PLAY A NOTE");
 
     // The FRETTING page drawn in the family's colours too (the PLAYING page is checked by the 0.4.0 test).
@@ -708,8 +707,8 @@ TEST_CASE ("0.4.0: BITE (less low-mid, more top); POLY WINDOW reported as latenc
         {
             auto take = std::make_shared<Take>();
             take->sampleRate = 48000.0;
-            // (the high E's 24th fret holds a 5 kHz tone instead: something up where BITE lifts)
-            const auto hz = s == 6 && f == numFrets ? 5000.0 : guitar::frequencyOf (noteOf (s, f));
+            // (the G string's 24th fret holds a 5 kHz tone instead: something up where BITE lifts)
+            const auto hz = s == numStrings - 1 && f == numFrets ? 5000.0 : guitar::frequencyOf (noteOf (s, f));
             for (int i = 0; i < 48000; ++i)
                 take->head.push_back (0.3f * (float) std::sin (juce::MathConstants<double>::twoPi * hz * i / 48000.0));
             take->frames = (juce::int64) take->head.size();
@@ -726,7 +725,7 @@ TEST_CASE ("0.4.0: BITE (less low-mid, more top); POLY WINDOW reported as latenc
         return levelAt (out, hz > 0.0 ? hz : guitar::frequencyOf (note), 4000, 4800);
     };
     const auto midDown = levelOf (64, 1.0f) / levelOf (64, 0.0f);                   // E4, 330 Hz: near the 400 Hz cut
-    const auto topUp = levelOf (88, 1.0f, 5000.0) / levelOf (88, 0.0f, 5000.0);     // 5 kHz: on the shelf
+    const auto topUp = levelOf (highestNote, 1.0f, 5000.0) / levelOf (highestNote, 0.0f, 5000.0);     // 5 kHz: on the shelf
     CHECK (juce::Decibels::gainToDecibels (midDown) < -3.0f);
     CHECK (juce::Decibels::gainToDecibels (topUp) > 4.0f);
 

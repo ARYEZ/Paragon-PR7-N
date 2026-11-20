@@ -226,7 +226,6 @@ private:
     std::atomic<float>* releaseValue = nullptr;
     std::atomic<float>* transposeValue = nullptr;
     std::atomic<float>* variationValue = nullptr;
-    std::atomic<float>* keyMapValue = nullptr;
     std::atomic<float>* patchLevelValue = nullptr;
     std::atomic<float>* outputValue = nullptr;
     std::atomic<float>* bypassValue = nullptr;
@@ -237,7 +236,7 @@ private:
     std::atomic<float>* polyWindowValue = nullptr;
     std::atomic<float>* biteValue = nullptr;
     std::atomic<float>* attackValue = nullptr;
-    std::atomic<float>* releaseNoiseValue = nullptr, * scrapesValue = nullptr, * fretNoiseValue = nullptr;   // 0.6.0
+    std::atomic<float>* releaseNoiseValue = nullptr, * scrapesValue = nullptr;   // 0.6.0 (PR7-N: no fret noise)
     guitar::PolyWindow polyWindow;
     juce::MidiBuffer windowedMidi;
     std::atomic<int> windowSamples { 0 };

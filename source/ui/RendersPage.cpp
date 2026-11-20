@@ -14,11 +14,7 @@ namespace
 }
 
 RendersPage::RendersPage (ParagonX1AudioProcessor& p)
-    : processor (p),
-      keyMap (p.getParameters(), ParamIDs::keyMap, "KEY MAP",
-              "How the articulation keyswitches work. SPLIT (your own map): C-1 plays palm mute at velocities 1-59 and sustain "
-              "at 60-119, each zone spread over all its degrees; C#-1 the same as power chords. FACTORY: C-1 sustain, C#-1 "
-              "palm mute, D#-1 / E-1 power chords. Not part of a preset.")
+    : processor (p)
 {
     for (auto* c : std::initializer_list<juce::Component*> { &guitarPanel, &renders })
         addAndMakeVisible (c);
@@ -33,7 +29,7 @@ RendersPage::RendersPage (ParagonX1AudioProcessor& p)
     chooseButton.onClick = [this] { chooseFolder(); };
     reloadButton.setTooltip ("Read the folder again (after copying takes into it)");
     reloadButton.onClick = [this] { processor.reloadGuitar(); };
-    for (auto* c : std::initializer_list<juce::Component*> { &folderLabel, &guitarStatus, &chooseButton, &reloadButton, &keyMap })
+    for (auto* c : std::initializer_list<juce::Component*> { &folderLabel, &guitarStatus, &chooseButton, &reloadButton })
         guitarPanel.addAndMakeVisible (c);
 
     renderHelp.setColour (juce::Label::textColourId, ParagonColours::textDim);
@@ -52,10 +48,10 @@ RendersPage::RendersPage (ParagonX1AudioProcessor& p)
     sustainTab.onClick = [this] { showArticulation (guitar::Articulation::sustain); };
     muteTab.onClick = [this] { showArticulation (guitar::Articulation::mute); };
     noisesTab.onClick = [this] { showNoises(); };
-    saveAllButton.setTooltip ("Save every render list (sustain and palm mute, all seven strings) and the noise lists into a folder");
+    saveAllButton.setTooltip ("Save every render list (sustain and palm mute, all five strings), the noise lists and the checks into a folder");
     saveAllButton.onClick = [this] { saveAllLists(); };
     renders.addAndMakeVisible (saveAllButton);
-    for (int s = guitar::numStrings - 1; s >= 0; --s)   // high E first, as the fretboard
+    for (int s = guitar::numStrings - 1; s >= 0; --s)   // the G first, as the fretboard
         rows.push_back (std::make_unique<StringRow> (processor, s, [this] { return shown; }));
     std::reverse (rows.begin(), rows.end());           // rows[string]
     for (int s = guitar::numStrings - 1; s >= 0; --s)
@@ -128,10 +124,10 @@ void RendersPage::showNoises()
         row->setVisible (true);
         row->refresh();
     }
-    renderHelp.setText ("The noises: a release at each note-off, scrapes, fret noise (F#0). Render each list as a DI with your guitar instrument's "
-                        "FACTORY map and release noises on, with Volume all the way down in the SOUND tab for: Sustain and Unpitched "
-                        "Release (each string's releases); Power Chord Sustain and Unpitched Release (power chords); Sustain and Pitched "
-                        "Release (unpitched); nothing (fret noise). Only the noises are left; import each.", juce::dontSendNotification);
+    renderHelp.setText ("The noises: a release at each note-off, and scrapes. Render each list as a DI through your bass instrument with its "
+                        "release noises on and its notes' volume all the way down (and, for each string's releases, the unpitched release's; "
+                        "for the unpitched list, the pitched release's), so only the noises are left; import each. If your bass instrument "
+                        "can't silence its notes alone, these can't be imported yet.", juce::dontSendNotification);
     resized();
 }
 
@@ -146,12 +142,11 @@ void RendersPage::showArticulation (guitar::Articulation a)
     (a == guitar::Articulation::mute ? muteTab : sustainTab).setToggleState (true, juce::dontSendNotification);
     const auto& spec = guitar::renders::spec (a);
     const auto minutes = juce::roundToInt ((guitar::renders::lengthSeconds (a, 0)) / 60.0);
-    renderHelp.setText ("Render each string's " + listName (a) + " list through your guitar instrument as a DI (its FACTORY articulation "
-                        "map, effects off, one guitar, no anti-repetition, ringing or release noises), then import the audio. Each "
-                        "string: 25 frets x " + juce::String (spec.layers) + (a == guitar::Articulation::mute ? " degrees of muting" : " dynamics")
-                        + " x " + juce::String (spec.roundRobins) + " takes of each stroke, about " + juce::String (minutes) + " minutes."
-                        + (a == guitar::Articulation::mute ? juce::String (" Use the v2 lists (each note's downs in a row, then its ups: more different palm mutes); "
-                                                                          "renders of the first lists won't import right.") : juce::String()),
+    renderHelp.setText ("Render each string's " + listName (a) + " list through your bass instrument as a DI (its own keyswitch "
+                        "map, drop A tuning, effects off, no doubling, anti-repetition, ringing or release noises), then import the audio. "
+                        "Each string: 25 frets x " + juce::String (spec.layers) + (a == guitar::Articulation::mute ? " velocities" : " dynamics")
+                        + " x " + juce::String (spec.roundRobins) + " takes of each stroke, about " + juce::String (minutes) + " minutes. "
+                        "Render the round-robin check first (SAVE ALL LISTS): it shows how many takes the bass really has.",
                         juce::dontSendNotification);
     for (auto& row : rows)
         row->refresh();
@@ -201,8 +196,6 @@ void RendersPage::resized()
         chooseButton.setBounds (buttons.removeFromLeft (170));
         buttons.removeFromLeft (8);
         reloadButton.setBounds (buttons.removeFromLeft (90));
-        c.removeFromTop (14);
-        keyMap.setBounds (c.removeFromTop (ParamControl::knobHeight - 30).withWidth (240));
     }
     {
         auto c = renders.getContentArea();
