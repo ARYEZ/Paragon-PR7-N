@@ -197,6 +197,13 @@ LIGHT = float(os.environ.get("GUITAR_LIGHT", "0.2"))
 RIM = float(os.environ.get("GUITAR_RIM", "0.4"))
 # A headless guitar (no headstock past the nut: the neck runs on a little to a string clamp): PR7-A 1, PR7-I 0.
 HEADLESS = os.environ.get("GUITAR_HEADLESS", "0") == "1"
+# PR7-N: a 5-string bass with fanned frets (GUITAR_BASS=1). Each string its own scale, longest on the low side as the
+# reference body's bass (37" to 34.25": +/-4% round the middle), the frets slanted so that GUITAR_FAN_FRET (7: our
+# guess) stays square; the average scale the guitars' own, so all 24 frets fit the same window at the same size.
+BASS = os.environ.get("GUITAR_BASS", "0") == "1"
+NSTR = 5 if BASS else 7
+FAN = float(os.environ.get("GUITAR_FAN", "0.04")) if BASS else 0.0
+FAN_FRET = float(os.environ.get("GUITAR_FAN_FRET", "7"))
 
 # ================================================================ dimensions (metres)
 PX_PER_M = 3000.0                # the plugin's 1x pixels per metre
@@ -218,7 +225,16 @@ def string_y(s, x):
     # string 0 (low A) on top (+y), fanning out from the nut to the bridge
     t = (X_NUT - x) / L
     spread = NUT_SPREAD + (BRIDGE_SPREAD - NUT_SPREAD) * t
-    return spread / 2 - s * spread / 6
+    return spread / 2 - s * spread / (NSTR - 1)
+
+# the fan: a string at y (toward the low strings +) has scale L x (1 + FAN y / FAN_Y); fret n sits at fx (n, y), the
+# fret FAN_FRET at the same x on every string (x_square)
+FAN_Y = BRIDGE_SPREAD / 2
+def scale_at(y):
+    return L * (1.0 + FAN * y / FAN_Y)
+def fx(n, y):
+    x_square = X_BRIDGE + L * 2 ** (-FAN_FRET / 12)
+    return x_square + scale_at(y) * (2 ** (-n / 12) - 2 ** (-FAN_FRET / 12))
 
 def neck_half(x):
     t = (X_NUT - x) / (X_NUT - fret_x(24))
@@ -325,10 +341,13 @@ x_end = fret_x(24) - 0.007
 neck_top = TOP + 0.004
 fb_top = neck_top + 0.006
 def tapered(name, x0, x1, z0, z1, extra, mat, bevel=0.0015):
+    # (x0 / x1: an x, or a function of y for a slanted end: the bass's fanned board)
     v = []
-    for x in (x0, x1):
-        h = neck_half(x) + extra
-        v += [(x, -h, z0), (x, h, z0), (x, h, z1), (x, -h, z1)]
+    for xe in (x0, x1):
+        xc = xe(0.0) if callable(xe) else xe
+        h = neck_half(xc) + extra
+        xa, xb = (xe(-h), xe(h)) if callable(xe) else (xe, xe)
+        v += [(xa, -h, z0), (xb, h, z0), (xb, h, z1), (xa, -h, z1)]
     faces = [(0, 1, 2, 3), (4, 7, 6, 5), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]
     o = mesh_from(name, v, faces, mat)
     if bevel:
@@ -337,23 +356,26 @@ def tapered(name, x0, x1, z0, z1, extra, mat, bevel=0.0015):
         bpy.ops.object.modifier_apply(modifier="bevel")
         smooth(o)
     return o
-tapered("neck", x_end - 0.03, X_NUT + (0.024 if HEADLESS else 0.004), -0.004, neck_top, 0.0012, NECKWOOD, 0.003)
-tapered("fretboard", x_end, X_NUT, neck_top - 0.001, fb_top, 0.0, EBONY, 0.0008)
+board_end_at = lambda y: fx(24, y) - 0.007      # (straight across when FAN is 0: the guitars)
+nut_at = lambda y: fx(0, y)
+tapered("neck", lambda y: board_end_at(y) - 0.03, (lambda y: nut_at(y) + (0.024 if HEADLESS else 0.004)), -0.004, neck_top, 0.0012, NECKWOOD, 0.003)
+tapered("fretboard", board_end_at, nut_at, neck_top - 0.001, fb_top, 0.0, EBONY, 0.0008)
 # a soft neon line along both edges of the fretboard
 for side in (1, -1):
-    tube("board edge", [(x_end, side * (neck_half(x_end) + 0.0007), fb_top - 0.001), (X_NUT, side * (neck_half(X_NUT) + 0.0007), fb_top - 0.001)], 0.0004, NEON_SOFT)
-# frets: glowing wires
+    ye, yn = side * (neck_half(x_end) + 0.0007), side * (neck_half(X_NUT) + 0.0007)
+    tube("board edge", [(board_end_at(ye), ye, fb_top - 0.001), (nut_at(yn), yn, fb_top - 0.001)], 0.0004, NEON_SOFT)
+# frets: glowing wires (slanted on the fanned bass)
 for f in range(1, 25):
-    x = fret_x(f)
-    h = neck_half(x) - 0.0006
-    cylinder("fret %d" % f, 0.00085, 2 * h, (x, 0, fb_top + 0.0002), FRETGLOW, rot=(math.pi / 2, 0, 0), verts=12)
-# the nut: bone
+    h = neck_half(fret_x(f)) - 0.0006
+    tube("fret %d" % f, [(fx(f, -h), -h, fb_top + 0.0002), (fx(f, h), h, fb_top + 0.0002)], 0.00085, FRETGLOW)
+# the nut: bone, along the nut's line
 nh = neck_half(X_NUT)
-box("nut", (0.005, 2 * nh, 0.006), (X_NUT + 0.0025, 0, fb_top + 0.0015), PEARL, bevel=0.001)
+nut_angle = math.atan2(nut_at(nh) - nut_at(-nh), 2 * nh)
+box("nut", (0.005, 2 * nh / math.cos(nut_angle), 0.006), (nut_at(0.0) + 0.0025, 0, fb_top + 0.0015), PEARL, bevel=0.001, rot=(0, 0, -nut_angle))
 # inlays: small glowing rings, doubles at 12 and 24
 for f in (3, 5, 7, 9, 12, 15, 17, 19, 21, 24):
-    x = (fret_x(f - 1) + fret_x(f)) / 2
     for y in ((0.0,) if f % 12 else (0.016, -0.016)):
+        x = (fx(f - 1, y) + fx(f, y)) / 2
         bpy.ops.mesh.primitive_torus_add(major_radius=0.0028, minor_radius=0.0005, location=(x, y, fb_top + 0.0001))
         assign(bpy.context.object, INLAY)
 if HEADLESS:
@@ -425,11 +447,11 @@ else:
 # ================================================================ pickups, bridge, controls
 def humbucker(name, X):
     x, _ = B(X, 0)
-    w, h = 0.036, 0.080
+    w, h = (0.019, 0.074) if BASS else (0.036, 0.080)   # (the bass's soapbars narrow: three of them 28 mm apart)
     box(name, (w, h, 0.007), (x, 0, TOP + 0.0025), PICKUP, bevel=0.0025, segs=4)
-    for s in range(7):
+    for s in range(NSTR):
         y = string_y(s, x)
-        for dx in (-0.0085, 0.0085):
+        for dx in ((0.0,) if BASS else (-0.0085, 0.0085)):
             cylinder(name + " pole", 0.0016, 0.002, (x + dx, y, TOP + 0.0062), POLE, verts=16)
     # a glowing ring round the pickup (the kit's rim light)
     r = 0.0035
@@ -439,13 +461,21 @@ def humbucker(name, X):
         cxp, cyp = (w / 2 - r + 0.0015) * (1 if math.cos(a) >= 0 else -1), (h / 2 - r + 0.0015) * (1 if math.sin(a) >= 0 else -1)
         ring.append((x + cxp + r * math.cos(a), cyp + r * math.sin(a), TOP + 0.0006))
     tube(name + " ring", ring, 0.0006, NEON, closed=True)
-humbucker("neck pickup", 126)
-humbucker("bridge pickup", 42)
-# fixed bridge: a black chrome plate, a saddle per string where the string breaks
-box("bridge plate", (0.034, 0.094, 0.003), (X_BRIDGE - 0.010, 0, TOP + 0.0015), CHROME, bevel=0.0012)
-for s in range(7):
+if BASS:
+    # three bass pickups close together nearer the neck (as the reference body's), soapbars with a pole per string
+    for name, X in (("neck pickup", 128), ("middle pickup", 100), ("bridge pickup", 72)):
+        humbucker(name, X)
+else:
+    humbucker("neck pickup", 126)
+    humbucker("bridge pickup", 42)
+# fixed bridge: a black chrome plate, a saddle per string where the string breaks (on the bass each string's own
+# scale puts its saddle further back on the low side, so the plate is slanted with them)
+bridge_at = lambda y: fx(0, y) - scale_at(y)
+plate_angle = math.atan2(bridge_at(0.047) - bridge_at(-0.047), 0.094)
+box("bridge plate", (0.034, 0.094 / math.cos(plate_angle), 0.003), (bridge_at(0.0) - 0.010, 0, TOP + 0.0015), CHROME, bevel=0.0012, rot=(0, 0, -plate_angle))
+for s in range(NSTR):
     y = string_y(s, X_BRIDGE)
-    box("saddle %d" % s, (0.014, 0.0085, 0.013), (X_BRIDGE - 0.004, y, TOP + 0.0075), CHROME, bevel=0.0012)
+    box("saddle %d" % s, (0.014, 0.011 if BASS else 0.0085, 0.013), (bridge_at(y) - 0.004, y, TOP + 0.0075), CHROME, bevel=0.0012)
 # a volume knob and the pickup switch: 0.7.2 leaves them out (GUITAR_CONTROLS=1 puts them back). They sat off the window
 # until the 85% camera, which brings the switch's pearl tip into the bottom left corner, a bright speck on its own
 # there; PR7-A (headless) never had them.
@@ -463,15 +493,16 @@ STRING_RGB = ["ff2d6e", None, None, "ff2a2e", None, None, "ff6a24"]
 def string_colour(s):
     def mix(a, b, t): return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
     pink, red, orange = (255, 45, 110), (255, 42, 46), (255, 106, 36)
-    t = s / 6
+    t = s / (NSTR - 1)
     c = mix(pink, red, t * 2) if t < 0.5 else mix(red, orange, (t - 0.5) * 2)
     return "%02x%02x%02x" % c
 z_string = fb_top + 0.0025
-for s in range(7):
+for s in range(NSTR):
     m = material("string %d" % s, srgb("6a6266"), metallic=1.0, rough=0.25, emission=srgb(string_colour(s)), strength=3.0)
-    r = 0.00034 - s * 0.00003
-    a = Vector((X_BRIDGE - 0.004, string_y(s, X_BRIDGE), TOP + 0.0145))
-    b = Vector((X_NUT + 0.009, string_y(s, X_NUT), z_string)) if HEADLESS else Vector((X_NUT + 0.0025, string_y(s, X_NUT), z_string))
+    r = (0.00075 - s * 0.0001) if BASS else (0.00034 - s * 0.00003)   # (bass strings far thicker)
+    yb, yn = string_y(s, X_BRIDGE), string_y(s, X_NUT)
+    a = Vector((bridge_at(yb) - 0.004, yb, TOP + 0.0145))
+    b = Vector((nut_at(yn) + 0.009, yn, z_string)) if HEADLESS else Vector((nut_at(yn) + 0.0025, yn, z_string))
     segments = [(a, b)]
     if not HEADLESS:   # over the nut and on to its tuner's post
         px_, py_ = POSTS[s]
