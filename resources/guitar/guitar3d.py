@@ -401,9 +401,12 @@ else:
     with open(os.environ.get("GUITAR_HEADSTOCK", os.path.join(os.path.dirname(os.path.abspath(__file__)), "headstock-outline.json"))) as f:
         head = json.load(f)
     H0 = X_NUT + 0.005   # where the headstock leaves the nut
+    # (PR7-N: a fanned headstock's x is measured from the slanted nut line, so it starts at our own fanned nut)
+    FANNED_HEAD = bool(head.get("fanned"))
+    h0_at = (lambda y: nut_at(y) + 0.005) if FANNED_HEAD else (lambda y: H0)
     # smoothed along its length as the body is (GUITAR_SMOOTH_MM, 3 mm), its straight sides first carried 5 mm on under
     # the nut, so the smoothing rounds those corners where the nut hides them
-    hv = smoothed([(H0 + (x if x > 0.5 else -5.0) / 1000.0, y / 1000.0) for x, y in head["outline"]],
+    hv = smoothed([(h0_at(y / 1000.0) + (x if x > 0.5 else -5.0) / 1000.0, y / 1000.0) for x, y in head["outline"]],
                   float(os.environ.get("GUITAR_SMOOTH_MM", "3")))
     head_z = neck_top - 0.006
     cu = bpy.data.curves.new("headstock", "CURVE"); cu.dimensions = "2D"; cu.fill_mode = "BOTH"; cu.extrude = 0.004; cu.bevel_depth = 0.0015
@@ -416,19 +419,21 @@ else:
     # the neon edge all round but where it joins the neck at the nut
     start = min(range(len(hv)), key=lambda k: (hv[k][0] > H0 + 0.001, -abs(hv[k][1])))
     ring = hv[start:] + hv[:start]
-    edge = [p for p in ring if p[0] > H0 + 0.0015]
+    edge = [p for p in ring if p[0] > h0_at(p[1]) + 0.0015]
     tube("headstock edge", [(p[0], p[1], face_z - 0.0005) for p in edge], 0.0006, NEON_SOFT)
     # the tuners: a black-chrome post and bushing on the face, the gear and button off the low strings' edge
-    POSTS = [(H0 + x / 1000.0, y / 1000.0) for x, y in head["posts"]]
-    def edge_y(x):   # the low strings' edge at x (the outline's largest y there)
-        near = [p for p in hv if abs(p[0] - x) < 0.004]
-        return max(p[1] for p in near) if near else 0.03
+    POSTS = [(h0_at(y / 1000.0) + x / 1000.0, y / 1000.0) for x, y in head["posts"]]
+    KEYS = head.get("keys", [1] * len(POSTS))   # (which side each tuner's key sticks out: +1 the low strings' side)
+    def edge_y(x, side=1):   # the headstock's edge on that side at x (the outline's largest / smallest y there)
+        near = [p[1] for p in hv if abs(p[0] - x) < 0.004]
+        return (max(near) if side > 0 else min(near)) if near else 0.03 * side
     for k, (px_, py_) in enumerate(POSTS):
+        side = KEYS[k]
         cylinder("bushing %d" % k, 0.0042, 0.002, (px_, py_, face_z + 0.001), CHROME, verts=24)
         cylinder("post %d" % k, 0.0028, 0.010, (px_, py_, face_z + 0.005), CHROME, verts=20)
-        ey = edge_y(px_)
-        cylinder("shaft %d" % k, 0.0016, 0.012, (px_, ey + 0.005, head_z + 0.002), CHROME, rot=(math.pi / 2, 0, 0), verts=12)
-        bx, by, bz = px_, ey + 0.0125, head_z + 0.002
+        ey = edge_y(px_, side)
+        cylinder("shaft %d" % k, 0.0016, 0.012, (px_, ey + side * 0.005, head_z + 0.002), CHROME, rot=(math.pi / 2, 0, 0), verts=12)
+        bx, by, bz = px_, ey + side * 0.0125, head_z + 0.002
         box("button %d" % k, (0.0135, 0.0105, 0.007), (bx, by, bz), CHROME, bevel=0.0025, segs=4)
         # a soft neon line round each button's top and round each post (black chrome alone vanishes in the dark scene)
         hw, hh, r = 0.0055, 0.0040, 0.0012
@@ -451,8 +456,13 @@ else:
     tc.size = float(os.environ.get("GUITAR_HEAD_NAME_SIZE", "0.027"))
     tc.extrude = 0.0002
     name = link(bpy.data.objects.new("headstock name", tc))
-    name.location = (H0 + 0.121, -0.0255, face_z + 0.0004)
-    name.rotation_euler = (0, 0, math.radians(-9.0))
+    if FANNED_HEAD:   # PR7-N: across the headstock's top, where the bass's maker's logo was (no strings over it)
+        tc.size = float(os.environ.get("GUITAR_HEAD_NAME_SIZE", "0.012"))
+        name.location = (h0_at(0.0) + 0.176, 0.006, face_z + 0.0004)
+        name.rotation_euler = (0, 0, math.radians(-90.0))
+    else:
+        name.location = (H0 + 0.121, -0.0255, face_z + 0.0004)
+        name.rotation_euler = (0, 0, math.radians(-9.0))
     name.data.materials.append(NEON_SOFT)
 
 # ================================================================ pickups, bridge, controls

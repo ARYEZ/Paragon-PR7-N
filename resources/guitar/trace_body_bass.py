@@ -34,6 +34,17 @@ for i in range(1, n):
     x, y, ww, hh, area = stats[i]
     if area < 4000 and (bg[lab == i] > 0).any():
         fg[cv2.dilate((lab == i).astype(np.uint8), np.ones((9, 9), np.uint8)) > 0] = 0
+# the strap buttons cut off along the body's edge too (a straight line between the edge either side of each: their pale
+# highlights escape the dark-blob test): the bottom one (below the edge) and the top one (on the upper horn)
+def edge_row(x, top):
+    ys = np.nonzero(fg[:, x])[0]
+    return int(ys.min() if top else ys.max())
+for a_, b_, top in ((478, 540, False),):   # (the top one: the dark-blob test already takes it off cleanly)
+    ya, yb = edge_row(a_, top), edge_row(b_, top)
+    for x in range(a_, b_ + 1):
+        yl = int(round(ya + (yb - ya) * (x - a_) / (b_ - a_)))
+        if top: fg[:max(0, yl - 1), x] = 0
+        else: fg[yl + 1:, x] = 0
 # the neck cut away down to the board's end (our 3D neck covers it), the slanted end included
 for y in range(0, board_end + 25):
     a, b = int(np.polyval(fl, y)) - 9, int(np.polyval(fr, y)) + 9   # (the neck's edge isn't maple-coloured)
@@ -46,6 +57,9 @@ fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_E
 cnts, _ = cv2.findContours(fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 fill = np.zeros_like(fg); cv2.drawContours(fill, [max(cnts, key=cv2.contourArea)], -1, 1, -1)
 fill = cv2.morphologyEx(fill, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+# the notch the top strap button leaves in the upper horn's tip filled (a closing there only: fills a dent, keeps the tip)
+roi = fill[40:180, 420:540].copy()
+fill[40:180, 420:540] = cv2.morphologyEx(np.pad(roi, 20), cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31)))[20:-20, 20:-20]
 cnts, _ = cv2.findContours(fill, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 c = max(cnts, key=cv2.contourArea)[:, 0, :].astype(float)
 wrap = np.concatenate([c[-smooth:], c, c[:smooth]]); k = np.ones(smooth) / smooth
