@@ -273,7 +273,7 @@ void GuitarRack::paint (juce::Graphics& g)
     g.setColour (Finish::printedRed());
     g.setFont (font (8.0f));
     g.drawText (page == Page::playing ? "TONE AND HOW EACH NOTE PLAYS" : page == Page::fretting ? "PICKING, FRETTING AND THE HAND"
-                                                                                              : "RELEASES, SCRAPES AND FRET NOISE (F#0)",
+                                                                                              : "RELEASES AND SCRAPES",
                 title, juce::Justification::centredLeft, false);
 
     // NOISES: a screen of what's imported.
